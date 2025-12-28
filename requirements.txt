@@ -1,0 +1,15 @@
+# 核心框架
+langchain
+langchain-community
+langchain-core
+langchain-openai
+langgraph
+
+# 数据源与工具
+akshare>=1.14.0  
+yfinance         
+duckduckgo-search
+requests
+
+# 数据处理
+pandas
