@@ -1,15 +1,20 @@
-# 核心框架
-langchain
-langchain-community
-langchain-core
-langchain-openai
-langgraph
+# AI和LLM框架
+langchain>=0.1.0
+langchain-core>=0.1.0
+langchain-openai>=0.0.5
+openai>=1.10.0
 
-# 数据源与工具
-akshare>=1.14.0  
-yfinance         
-duckduckgo-search
-requests
+# 数据处理和分析
+pandas>=2.0.0
+numpy>=1.24.0
 
-# 数据处理
-pandas
+# A股数据源
+akshare>=1.12.0
+
+# Web框架和实时通信
+flask>=3.0.0
+flask-socketio>=5.3.0
+eventlet>=0.33.0
+
+# 环境配置
+python-dotenv>=1.0.0

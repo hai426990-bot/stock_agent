@@ -1,0 +1,753 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>A股智能投资分析系统</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+</head>
+<body>
+    <div class="container">
+        <header class="header">
+            <h1>📊 A股智能投资分析系统</h1>
+            <p class="subtitle">基于LangChain和OpenAI的多Agent智能分析平台</p>
+        </header>
+
+        <div class="nav-section">
+            <button class="nav-btn active" data-section="analysis">股票分析</button>
+            <button class="nav-btn" data-section="backtest">策略回测</button>
+            <button class="nav-btn" data-section="comparison">对比分析</button>
+            <button class="nav-btn" data-section="portfolio">投资组合</button>
+        </div>
+
+        <div class="search-section">
+            <div class="search-box">
+                <input type="text" id="stockCode" placeholder="请输入股票代码（如：600519）" maxlength="6">
+                <button id="analyzeBtn" onclick="startAnalysis()">开始分析</button>
+                <button id="clearBtn" onclick="clearHistory()">清除历史</button>
+            </div>
+            <div class="connection-status" id="connectionStatus">
+                <span class="status-indicator disconnected"></span>
+                <span class="status-text">未连接</span>
+            </div>
+        </div>
+
+        <div class="overall-progress-section" id="overallProgress" style="display: none;">
+            <div class="overall-progress-card">
+                <div class="overall-progress-header">
+                    <h2>📊 分析进度</h2>
+                    <span class="overall-progress-percentage" id="overallProgressPercentage">0%</span>
+                </div>
+                <div class="overall-progress-bar">
+                    <div class="overall-progress-fill" id="overallProgressFill"></div>
+                </div>
+                <div class="overall-progress-status" id="overallProgressStatus">
+                    等待开始...
+                </div>
+                <div class="agent-status-list">
+                    <div class="agent-status-item" id="status-data_downloader-item">
+                        <span class="agent-status-icon">⏳</span>
+                        <span class="agent-status-name">下载数据</span>
+                        <span class="agent-status-text">等待中</span>
+                    </div>
+                    <div class="agent-status-item" id="status-technical_analyst-item">
+                        <span class="agent-status-icon">⏳</span>
+                        <span class="agent-status-name">张技术</span>
+                        <span class="agent-status-text">等待中</span>
+                    </div>
+                    <div class="agent-status-item" id="status-fundamental_analyst-item">
+                        <span class="agent-status-icon">⏳</span>
+                        <span class="agent-status-name">李价值</span>
+                        <span class="agent-status-text">等待中</span>
+                    </div>
+                    <div class="agent-status-item" id="status-risk_manager-item">
+                        <span class="agent-status-icon">⏳</span>
+                        <span class="agent-status-name">王风控</span>
+                        <span class="agent-status-text">等待中</span>
+                    </div>
+                    <div class="agent-status-item" id="status-sentiment_analyst-item">
+                        <span class="agent-status-icon">⏳</span>
+                        <span class="agent-status-name">赵情绪</span>
+                        <span class="agent-status-text">等待中</span>
+                    </div>
+                    <div class="agent-status-item" id="status-investment_strategist-item">
+                        <span class="agent-status-icon">⏳</span>
+                        <span class="agent-status-name">陈策略</span>
+                        <span class="agent-status-text">等待中</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="chart-section" id="chartSection" style="display: block;">
+            <div class="chart-header">
+                <h2>📈 K线走势图</h2>
+                <div class="chart-controls">
+                    <button class="chart-period-btn active" data-period="daily">日K</button>
+                    <button class="chart-period-btn" data-period="weekly">周K</button>
+                    <button class="chart-period-btn" data-period="monthly">月K</button>
+                </div>
+            </div>
+            <div class="chart-info">
+                <div class="stock-basic-info">
+                    <span class="stock-name" id="chartStockName">--</span>
+                    <span class="stock-code" id="chartStockCode">--</span>
+                    <span class="current-price" id="chartCurrentPrice">--</span>
+                </div>
+                <div class="stock-indicators">
+                    <span class="indicator-item">涨跌: <span id="chartChange">--</span></span>
+                    <span class="indicator-item">涨跌幅: <span id="chartChangePercent">--</span></span>
+                    <span class="indicator-item">成交量: <span id="chartVolume">--</span></span>
+                    <span class="indicator-item">成交额: <span id="chartAmount">--</span></span>
+                </div>
+            </div>
+            <div class="chart-container">
+                <div id="klineChart" style="width: 100%; height: 500px;"></div>
+            </div>
+        </div>
+
+        <div class="agents-grid" id="agentsGrid">
+            <div class="agent-card" id="technical_analyst">
+                <div class="agent-header">
+                    <span class="agent-icon">📈</span>
+                    <div class="agent-info">
+                        <h3 class="agent-name">张技术</h3>
+                        <p class="agent-title">技术分析师</p>
+                    </div>
+                    <span class="agent-status" id="status-technical_analyst">⏳</span>
+                </div>
+                <div class="agent-progress">
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="progress-technical_analyst"></div>
+                    </div>
+                    <span class="progress-text" id="progress-text-technical_analyst">0%</span>
+                </div>
+                <div class="agent-content" id="content-technical_analyst">
+                    <p class="placeholder">等待分析...</p>
+                </div>
+            </div>
+
+            <div class="agent-card" id="fundamental_analyst">
+                <div class="agent-header">
+                    <span class="agent-icon">💰</span>
+                    <div class="agent-info">
+                        <h3 class="agent-name">李价值</h3>
+                        <p class="agent-title">基本面分析师</p>
+                    </div>
+                    <span class="agent-status" id="status-fundamental_analyst">⏳</span>
+                </div>
+                <div class="agent-progress">
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="progress-fundamental_analyst"></div>
+                    </div>
+                    <span class="progress-text" id="progress-text-fundamental_analyst">0%</span>
+                </div>
+                <div class="agent-content" id="content-fundamental_analyst">
+                    <p class="placeholder">等待分析...</p>
+                </div>
+            </div>
+
+            <div class="agent-card" id="risk_manager">
+                <div class="agent-header">
+                    <span class="agent-icon">⚠️</span>
+                    <div class="agent-info">
+                        <h3 class="agent-name">王风控</h3>
+                        <p class="agent-title">风险控制专家</p>
+                    </div>
+                    <span class="agent-status" id="status-risk_manager">⏳</span>
+                </div>
+                <div class="agent-progress">
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="progress-risk_manager"></div>
+                    </div>
+                    <span class="progress-text" id="progress-text-risk_manager">0%</span>
+                </div>
+                <div class="agent-content" id="content-risk_manager">
+                    <p class="placeholder">等待分析...</p>
+                </div>
+            </div>
+
+            <div class="agent-card" id="sentiment_analyst">
+                <div class="agent-header">
+                    <span class="agent-icon">😊</span>
+                    <div class="agent-info">
+                        <h3 class="agent-name">赵情绪</h3>
+                        <p class="agent-title">市场情绪分析师</p>
+                    </div>
+                    <span class="agent-status" id="status-sentiment_analyst">⏳</span>
+                </div>
+                <div class="agent-progress">
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="progress-sentiment_analyst"></div>
+                    </div>
+                    <span class="progress-text" id="progress-text-sentiment_analyst">0%</span>
+                </div>
+                <div class="agent-content" id="content-sentiment_analyst">
+                    <p class="placeholder">等待分析...</p>
+                </div>
+            </div>
+
+            <div class="agent-card" id="investment_strategist">
+                <div class="agent-header">
+                    <span class="agent-icon">🎯</span>
+                    <div class="agent-info">
+                        <h3 class="agent-name">陈策略</h3>
+                        <p class="agent-title">投资策略师</p>
+                    </div>
+                    <span class="agent-status" id="status-investment_strategist">⏳</span>
+                </div>
+                <div class="agent-progress">
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="progress-investment_strategist"></div>
+                    </div>
+                    <span class="progress-text" id="progress-text-investment_strategist">0%</span>
+                </div>
+                <div class="agent-content" id="content-investment_strategist">
+                    <p class="placeholder">等待其他Agent分析...</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="final-summary-section" id="finalSummary" style="display: none;">
+            <div class="final-summary-header">
+                <h2>📊 最终投资建议</h2>
+                <div class="recommendation-badge" id="recommendationBadge">
+                    <span class="recommendation-icon">🎯</span>
+                    <span class="recommendation-text">分析中...</span>
+                </div>
+            </div>
+            
+            <div class="final-summary-grid">
+                <div class="final-summary-main">
+                    <div class="summary-cards">
+                        <div class="summary-card score-card">
+                            <div class="card-icon">📈</div>
+                            <div class="card-content">
+                                <div class="card-label">综合评分</div>
+                                <div class="card-value" id="scoreValue">--</div>
+                                <div class="card-trend" id="scoreTrend">--</div>
+                            </div>
+                        </div>
+                        
+                        <div class="summary-card risk-card">
+                            <div class="card-icon">⚠️</div>
+                            <div class="card-content">
+                                <div class="card-label">风险等级</div>
+                                <div class="card-value" id="riskValue">--</div>
+                                <div class="card-desc" id="riskDesc">--</div>
+                            </div>
+                        </div>
+                        
+                        <div class="summary-card position-card">
+                            <div class="card-icon">💼</div>
+                            <div class="card-content">
+                                <div class="card-label">建议仓位</div>
+                                <div class="card-value" id="positionValue">--</div>
+                                <div class="card-desc" id="positionDesc">--</div>
+                            </div>
+                        </div>
+                        
+                        <div class="summary-card target-card">
+                            <div class="card-icon">🎯</div>
+                            <div class="card-content">
+                                <div class="card-label">目标价位</div>
+                                <div class="card-value" id="targetValue">--</div>
+                                <div class="card-desc" id="targetDesc">--</div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="final-summary-content" id="finalSummaryContent">
+                    </div>
+                </div>
+                
+                <div class="final-summary-sidebar">
+                    <div class="sidebar-chart">
+                        <h3>📊 技术指标雷达图</h3>
+                        <div id="radarChart" style="width: 100%; height: 300px;"></div>
+                    </div>
+                    
+                    <div class="sidebar-chart">
+                        <h3>💹 价格走势预测</h3>
+                        <div id="trendChart" style="width: 100%; height: 250px;"></div>
+                    </div>
+                    
+                    <div class="key-points">
+                        <h3>🔑 关键要点</h3>
+                        <ul id="keyPointsList">
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="analysis-charts-section" id="analysisChartsSection" style="display: none;">
+            <div class="charts-section-header">
+                <h2>📊 深度分析图表</h2>
+                <div class="chart-tabs">
+                    <button class="chart-tab-btn active" data-tab="volume">成交量分析</button>
+                    <button class="chart-tab-btn" data-tab="macd">MACD指标</button>
+                    <button class="chart-tab-btn" data-tab="rsi">RSI指标</button>
+                    <button class="chart-tab-btn" data-tab="allocation">仓位配置</button>
+                </div>
+            </div>
+            
+            <div class="charts-container">
+                <div class="chart-panel active" id="volumePanel">
+                    <div class="panel-header">
+                        <h3>📊 成交量分析</h3>
+                        <p class="panel-desc">分析股票成交量的变化趋势，判断资金流向</p>
+                    </div>
+                    <div id="volumeChart" style="width: 100%; height: 400px;"></div>
+                    <div class="panel-footer">
+                        <div class="stat-item">
+                            <span class="stat-label">平均成交量</span>
+                            <span class="stat-value" id="avgVolume">--</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-label">成交量趋势</span>
+                            <span class="stat-value" id="volumeTrend">--</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-label">量价关系</span>
+                            <span class="stat-value" id="priceVolumeRelation">--</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="chart-panel" id="macdPanel">
+                    <div class="panel-header">
+                        <h3>📈 MACD指标分析</h3>
+                        <p class="panel-desc">通过MACD指标判断买卖信号和趋势变化</p>
+                    </div>
+                    <div id="macdChart" style="width: 100%; height: 400px;"></div>
+                    <div class="panel-footer">
+                        <div class="stat-item">
+                            <span class="stat-label">DIF值</span>
+                            <span class="stat-value" id="difValue">--</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-label">DEA值</span>
+                            <span class="stat-value" id="deaValue">--</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-label">MACD信号</span>
+                            <span class="stat-value" id="macdSignal">--</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="chart-panel" id="rsiPanel">
+                    <div class="panel-header">
+                        <h3>📉 RSI指标分析</h3>
+                        <p class="panel-desc">通过RSI指标判断超买超卖状态</p>
+                    </div>
+                    <div id="rsiChart" style="width: 100%; height: 400px;"></div>
+                    <div class="panel-footer">
+                        <div class="stat-item">
+                            <span class="stat-label">RSI(6)</span>
+                            <span class="stat-value" id="rsi6Value">--</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-label">RSI(12)</span>
+                            <span class="stat-value" id="rsi12Value">--</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-label">RSI(24)</span>
+                            <span class="stat-value" id="rsi24Value">--</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="chart-panel" id="allocationPanel">
+                    <div class="panel-header">
+                        <h3>💼 仓位配置建议</h3>
+                        <p class="panel-desc">根据风险评估提供仓位配置建议</p>
+                    </div>
+                    <div id="allocationChart" style="width: 100%; height: 400px;"></div>
+                    <div class="panel-footer">
+                        <div class="stat-item">
+                            <span class="stat-label">建议仓位</span>
+                            <span class="stat-value" id="suggestedPosition">--</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-label">风险控制</span>
+                            <span class="stat-value" id="riskControl">--</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-label">止损点</span>
+                            <span class="stat-value" id="stopLoss">--</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="backtest-section" id="backtestSection" style="display: none;">
+            <div class="backtest-header">
+                <h2>📊 回测结果分析</h2>
+                <div class="backtest-controls">
+                    <button class="backtest-btn" id="runBacktestBtn">运行回测</button>
+                    <button class="backtest-btn secondary" id="downloadReportBtn">下载报告</button>
+                </div>
+            </div>
+            
+            <div class="backtest-summary-cards">
+                <div class="backtest-summary-card">
+                    <div class="backtest-card-icon">💰</div>
+                    <div class="backtest-card-content">
+                        <div class="backtest-card-label">总收益率</div>
+                        <div class="backtest-card-value" id="totalReturn">--</div>
+                        <div class="backtest-card-change" id="totalReturnChange">--</div>
+                    </div>
+                </div>
+                
+                <div class="backtest-summary-card">
+                    <div class="backtest-card-icon">📈</div>
+                    <div class="backtest-card-content">
+                        <div class="backtest-card-label">年化收益率</div>
+                        <div class="backtest-card-value" id="annualReturn">--</div>
+                        <div class="backtest-card-desc">年化</div>
+                    </div>
+                </div>
+                
+                <div class="backtest-summary-card">
+                    <div class="backtest-card-icon">⚠️</div>
+                    <div class="backtest-card-content">
+                        <div class="backtest-card-label">最大回撤</div>
+                        <div class="backtest-card-value" id="maxDrawdown">--</div>
+                        <div class="backtest-card-desc">最大亏损</div>
+                    </div>
+                </div>
+                
+                <div class="backtest-summary-card">
+                    <div class="backtest-card-icon">🎯</div>
+                    <div class="backtest-card-content">
+                        <div class="backtest-card-label">夏普比率</div>
+                        <div class="backtest-card-value" id="sharpeRatio">--</div>
+                        <div class="backtest-card-desc">风险调整收益</div>
+                    </div>
+                </div>
+                
+                <div class="backtest-summary-card">
+                    <div class="backtest-card-icon">✅</div>
+                    <div class="backtest-card-content">
+                        <div class="backtest-card-label">胜率</div>
+                        <div class="backtest-card-value" id="winRate">--</div>
+                        <div class="backtest-card-desc">盈利交易占比</div>
+                    </div>
+                </div>
+                
+                <div class="backtest-summary-card">
+                    <div class="backtest-card-icon">🔄</div>
+                    <div class="backtest-card-content">
+                        <div class="backtest-card-label">盈亏比</div>
+                        <div class="backtest-card-value" id="profitLossRatio">--</div>
+                        <div class="backtest-card-desc">平均盈利/亏损</div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="backtest-charts-grid">
+                <div class="backtest-chart-card main-chart">
+                    <div class="backtest-chart-header">
+                        <h3>💹 资金曲线</h3>
+                        <div class="backtest-chart-legend">
+                            <span class="legend-item"><span class="legend-color equity"></span>资金曲线</span>
+                            <span class="legend-item"><span class="legend-color benchmark"></span>基准线</span>
+                            <span class="legend-item"><span class="legend-color price"></span>股价</span>
+                        </div>
+                    </div>
+                    <div id="equityCurveChart" style="width: 100%; height: 450px;"></div>
+                </div>
+                
+                <div class="backtest-chart-card">
+                    <div class="backtest-chart-header">
+                        <h3>📉 回撤曲线</h3>
+                        <p class="backtest-chart-desc">展示策略回撤情况</p>
+                    </div>
+                    <div id="drawdownChart" style="width: 100%; height: 350px;"></div>
+                    <div class="backtest-chart-footer">
+                        <div class="backtest-stat">
+                            <span class="backtest-stat-label">平均回撤</span>
+                            <span class="backtest-stat-value" id="avgDrawdown">--</span>
+                        </div>
+                        <div class="backtest-stat">
+                            <span class="backtest-stat-label">回撤次数</span>
+                            <span class="backtest-stat-value" id="drawdownCount">--</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="backtest-chart-card">
+                    <div class="backtest-chart-header">
+                        <h3>📊 交易收益分布</h3>
+                        <p class="backtest-chart-desc">每笔交易的收益率分布</p>
+                    </div>
+                    <div id="tradeDistributionChart" style="width: 100%; height: 350px;"></div>
+                    <div class="backtest-chart-footer">
+                        <div class="backtest-stat">
+                            <span class="backtest-stat-label">盈利交易</span>
+                            <span class="backtest-stat-value" id="winTrades">--</span>
+                        </div>
+                        <div class="backtest-stat">
+                            <span class="backtest-stat-label">亏损交易</span>
+                            <span class="backtest-stat-value" id="lossTrades">--</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="backtest-chart-card">
+                    <div class="backtest-chart-header">
+                        <h3>🎯 回测指标雷达图</h3>
+                        <p class="backtest-chart-desc">多维度评估策略表现</p>
+                    </div>
+                    <div id="metricsRadarChart" style="width: 100%; height: 350px;"></div>
+                    <div class="backtest-chart-footer">
+                        <div class="backtest-stat">
+                            <span class="backtest-stat-label">综合评分</span>
+                            <span class="backtest-stat-value" id="backtestScore">--</span>
+                        </div>
+                        <div class="backtest-stat">
+                            <span class="backtest-stat-label">交易次数</span>
+                            <span class="backtest-stat-value" id="totalTrades">--</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="backtest-trades-table">
+                <div class="backtest-table-header">
+                    <h3>📋 交易明细</h3>
+                    <div class="backtest-table-controls">
+                        <select class="backtest-table-filter" id="tradesFilter">
+                            <option value="all">全部交易</option>
+                            <option value="profit">盈利交易</option>
+                            <option value="loss">亏损交易</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="backtest-table-container">
+                    <table class="backtest-table">
+                        <thead>
+                            <tr>
+                                <th>序号</th>
+                                <th>买入日期</th>
+                                <th>卖出日期</th>
+                                <th>买入价格</th>
+                                <th>卖出价格</th>
+                                <th>持仓天数</th>
+                                <th>收益率</th>
+                                <th>盈亏</th>
+                            </tr>
+                        </thead>
+                        <tbody id="tradesTableBody">
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <div class="comparison-section" id="comparisonSection" style="display: none;">
+            <div class="comparison-header">
+                <h2>⚖️ 比较分析</h2>
+                <div class="comparison-controls">
+                    <button class="comparison-btn" id="addComparisonBtn">添加对比股票</button>
+                    <button class="comparison-btn secondary" id="clearComparisonBtn">清空对比</button>
+                </div>
+            </div>
+            
+            <div class="comparison-input-area" id="comparisonInputArea" style="display: none;">
+                <div class="comparison-input-box">
+                    <input type="text" id="comparisonStockCode" placeholder="输入对比股票代码（如：000858）" maxlength="6">
+                    <button class="comparison-add-btn" id="confirmAddComparisonBtn">添加</button>
+                    <button class="comparison-cancel-btn" id="cancelAddComparisonBtn">取消</button>
+                </div>
+            </div>
+            
+            <div class="comparison-stock-list" id="comparisonStockList">
+                <p class="no-comparison">暂无对比股票，点击"添加对比股票"开始比较</p>
+            </div>
+            
+            <div class="comparison-charts-container" id="comparisonChartsContainer" style="display: none;">
+                <div class="comparison-chart-tabs">
+                    <button class="comparison-tab-btn active" data-tab="price">价格走势对比</button>
+                    <button class="comparison-tab-btn" data-tab="performance">收益表现对比</button>
+                    <button class="comparison-tab-btn" data-tab="metrics">指标对比</button>
+                </div>
+                
+                <div class="comparison-chart-panel active" id="pricePanel">
+                    <div class="comparison-panel-header">
+                        <h3>📈 价格走势对比</h3>
+                        <p class="comparison-panel-desc">对比多只股票的价格变化趋势</p>
+                    </div>
+                    <div id="priceComparisonChart" style="width: 100%; height: 500px;"></div>
+                </div>
+                
+                <div class="comparison-chart-panel" id="performancePanel">
+                    <div class="comparison-panel-header">
+                        <h3>💹 收益表现对比</h3>
+                        <p class="comparison-panel-desc">对比多只股票的收益率表现</p>
+                    </div>
+                    <div id="performanceComparisonChart" style="width: 100%; height: 500px;"></div>
+                    <div class="comparison-panel-footer">
+                        <div class="comparison-stat-item">
+                            <span class="comparison-stat-label">最高收益股票</span>
+                            <span class="comparison-stat-value" id="highestReturnStock">--</span>
+                        </div>
+                        <div class="comparison-stat-item">
+                            <span class="comparison-stat-label">最低收益股票</span>
+                            <span class="comparison-stat-value" id="lowestReturnStock">--</span>
+                        </div>
+                        <div class="comparison-stat-item">
+                            <span class="comparison-stat-label">平均收益率</span>
+                            <span class="comparison-stat-value" id="avgReturnRate">--</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="comparison-chart-panel" id="metricsPanel">
+                    <div class="comparison-panel-header">
+                        <h3>📊 关键指标对比</h3>
+                        <p class="comparison-panel-desc">对比多只股票的关键技术指标</p>
+                    </div>
+                    <div id="metricsComparisonChart" style="width: 100%; height: 500px;"></div>
+                </div>
+            </div>
+        </div>
+
+        <div class="portfolio-section" id="portfolioSection" style="display: none;">
+            <div class="portfolio-header">
+                <h2>💼 投资组合分析</h2>
+                <div class="portfolio-controls">
+                    <button class="portfolio-btn" id="addPortfolioStockBtn">添加持仓股票</button>
+                    <button class="portfolio-btn secondary" id="clearPortfolioBtn">清空组合</button>
+                    <button class="portfolio-btn" id="analyzePortfolioBtn">分析组合</button>
+                </div>
+            </div>
+            
+            <div class="portfolio-input-area" id="portfolioInputArea" style="display: none;">
+                <div class="portfolio-input-box">
+                    <div class="portfolio-input-group">
+                        <label>股票代码</label>
+                        <input type="text" id="portfolioStockCode" placeholder="输入股票代码（如：000858）" maxlength="6">
+                    </div>
+                    <div class="portfolio-input-group">
+                        <label>持仓数量</label>
+                        <input type="number" id="portfolioStockQuantity" placeholder="输入持仓数量" min="1">
+                    </div>
+                    <div class="portfolio-input-group">
+                        <label>买入价格</label>
+                        <input type="number" id="portfolioStockPrice" placeholder="输入买入价格" min="0" step="0.01">
+                    </div>
+                    <button class="portfolio-add-btn" id="confirmAddPortfolioBtn">添加</button>
+                    <button class="portfolio-cancel-btn" id="cancelAddPortfolioBtn">取消</button>
+                </div>
+            </div>
+            
+            <div class="portfolio-summary" id="portfolioSummary" style="display: none;">
+                <div class="portfolio-summary-cards">
+                    <div class="portfolio-summary-card">
+                        <div class="portfolio-card-icon">💰</div>
+                        <div class="portfolio-card-content">
+                            <div class="portfolio-card-label">总市值</div>
+                            <div class="portfolio-card-value" id="portfolioTotalValue">--</div>
+                        </div>
+                    </div>
+                    <div class="portfolio-summary-card">
+                        <div class="portfolio-card-icon">📈</div>
+                        <div class="portfolio-card-content">
+                            <div class="portfolio-card-label">总盈亏</div>
+                            <div class="portfolio-card-value" id="portfolioTotalProfit">--</div>
+                        </div>
+                    </div>
+                    <div class="portfolio-summary-card">
+                        <div class="portfolio-card-icon">📊</div>
+                        <div class="portfolio-card-content">
+                            <div class="portfolio-card-label">收益率</div>
+                            <div class="portfolio-card-value" id="portfolioReturnRate">--</div>
+                        </div>
+                    </div>
+                    <div class="portfolio-summary-card">
+                        <div class="portfolio-card-icon">⚠️</div>
+                        <div class="portfolio-card-content">
+                            <div class="portfolio-card-label">最大回撤</div>
+                            <div class="portfolio-card-value" id="portfolioMaxDrawdown">--</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="portfolio-stock-list" id="portfolioStockList">
+                <p class="no-portfolio">暂无持仓股票，点击"添加持仓股票"开始构建组合</p>
+            </div>
+            
+            <div class="portfolio-charts-container" id="portfolioChartsContainer" style="display: none;">
+                <div class="portfolio-chart-tabs">
+                    <button class="portfolio-tab-btn active" data-tab="allocation">资产配置</button>
+                    <button class="portfolio-tab-btn" data-tab="performance">收益分析</button>
+                    <button class="portfolio-tab-btn" data-tab="risk">风险评估</button>
+                    <button class="portfolio-tab-btn" data-tab="correlation">相关性分析</button>
+                </div>
+                
+                <div class="portfolio-chart-panel active" id="allocationPanel">
+                    <div class="portfolio-panel-header">
+                        <h3>📊 资产配置</h3>
+                        <p class="portfolio-panel-desc">投资组合中各股票的市值占比分布</p>
+                    </div>
+                    <div id="portfolioAllocationChart" style="width: 100%; height: 500px;"></div>
+                </div>
+                
+                <div class="portfolio-chart-panel" id="performancePanel">
+                    <div class="portfolio-panel-header">
+                        <h3>💹 收益分析</h3>
+                        <p class="portfolio-panel-desc">投资组合的整体收益表现</p>
+                    </div>
+                    <div id="portfolioPerformanceChart" style="width: 100%; height: 500px;"></div>
+                    <div class="portfolio-panel-footer">
+                        <div class="portfolio-stat-item">
+                            <span class="portfolio-stat-label">累计收益</span>
+                            <span class="portfolio-stat-value" id="portfolioCumulativeReturn">--</span>
+                        </div>
+                        <div class="portfolio-stat-item">
+                            <span class="portfolio-stat-label">年化收益</span>
+                            <span class="portfolio-stat-value" id="portfolioAnnualReturn">--</span>
+                        </div>
+                        <div class="portfolio-stat-item">
+                            <span class="portfolio-stat-label">夏普比率</span>
+                            <span class="portfolio-stat-value" id="portfolioSharpeRatio">--</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="portfolio-chart-panel" id="riskPanel">
+                    <div class="portfolio-panel-header">
+                        <h3>⚠️ 风险评估</h3>
+                        <p class="portfolio-panel-desc">投资组合的风险指标分析</p>
+                    </div>
+                    <div id="portfolioRiskChart" style="width: 100%; height: 500px;"></div>
+                </div>
+                
+                <div class="portfolio-chart-panel" id="correlationPanel">
+                    <div class="portfolio-panel-header">
+                        <h3>🔗 相关性分析</h3>
+                        <p class="portfolio-panel-desc">投资组合中各股票之间的相关性</p>
+                    </div>
+                    <div id="portfolioCorrelationChart" style="width: 100%; height: 500px;"></div>
+                </div>
+            </div>
+        </div>
+
+        <div class="history-section">
+            <h2>📋 历史分析记录</h2>
+            <div class="history-list" id="historyList">
+                <p class="no-history">暂无历史记录</p>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/js/app.js"></script>
+</body>
+</html>
