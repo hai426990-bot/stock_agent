@@ -3,6 +3,7 @@ from typing import Dict, Any, Optional, Callable
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 from config import Config
+from tools.logger import logger
 import time
 
 class BaseAgent(ABC):
@@ -82,11 +83,11 @@ class BaseAgent(ABC):
                 ("human", analysis_input)
             ]
             
-            print(f"[DEBUG] {self.name}: Sending request to LLM with timeout {Config.AGENT_TIMEOUT}s")
+            logger.debug(f"{self.name}: Sending request to LLM with timeout {Config.AGENT_TIMEOUT}s")
             start_time = time.time()
             response = self.llm.invoke(messages)
             end_time = time.time()
-            print(f"[DEBUG] {self.name}: LLM response received after {end_time - start_time:.2f}s")
+            logger.debug(f"{self.name}: LLM response received after {end_time - start_time:.2f}s")
             
             full_response = response.content
             
@@ -105,7 +106,7 @@ class BaseAgent(ABC):
                 'raw_response': full_response
             }
         except Exception as e:
-            print(f"[DEBUG] {self.name}: Analysis error: {str(e)}")
+            logger.exception(f"{self.name}: Analysis error: {str(e)}")
             self._notify('error', 0, f"{self.name}分析出错: {str(e)}")
             raise
     

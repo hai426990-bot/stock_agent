@@ -1,6 +1,8 @@
 from typing import Dict, Any, List, Optional
 import pandas as pd
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor, as_completed, wait, FIRST_COMPLETED
+import time
 from agents.technical_analyst import TechnicalAnalyst
 from agents.fundamental_analyst import FundamentalAnalyst
 from agents.risk_manager import RiskManager
@@ -10,6 +12,8 @@ from tools.data_fetcher import DataFetcher
 from tools.stock_analyzer import StockAnalyzer
 from tools.backtest_engine import BacktestEngine
 from tools.backtest_visualizer import BacktestVisualizer
+from tools.logger import logger
+from tools.performance_monitor import performance_monitor, print_stats, reset_stats
 
 class StockAgent:
     def __init__(self, callback=None, session_id=None):
@@ -17,8 +21,8 @@ class StockAgent:
         self.stock_analyzer = StockAnalyzer()
         self.callback = callback
         self.session_id = session_id
-        self.backtest_engine = BacktestEngine()
-        self.backtest_visualizer = BacktestVisualizer()
+        self._backtest_engine = None
+        self._backtest_visualizer = None
         
         self.agents = {
             'technical_analyst': TechnicalAnalyst(callback, session_id),
@@ -27,6 +31,18 @@ class StockAgent:
             'sentiment_analyst': SentimentAnalyst(callback, session_id),
             'investment_strategist': InvestmentStrategist(callback, session_id)
         }
+
+    @property
+    def backtest_engine(self) -> BacktestEngine:
+        if self._backtest_engine is None:
+            self._backtest_engine = BacktestEngine()
+        return self._backtest_engine
+
+    @property
+    def backtest_visualizer(self) -> BacktestVisualizer:
+        if self._backtest_visualizer is None:
+            self._backtest_visualizer = BacktestVisualizer()
+        return self._backtest_visualizer
     
     def _notify(self, message: str):
         if self.callback:
@@ -56,18 +72,86 @@ class StockAgent:
                 'session_id': self.session_id
             })
     
+    @performance_monitor
     def analyze_stock(self, stock_code: str) -> Dict[str, Any]:
-        print(f"[DEBUG] Starting analysis for stock code: {stock_code}")
+        # 重置性能统计
+        reset_stats()
+        logger.info(f"[股票分析] 开始分析股票代码: {stock_code}")
         self._notify(f"开始分析股票 {stock_code}...")
         
         self._notify_agent('data_downloader', 'analyzing', 10, '开始下载数据...')
         
         try:
-            print("[DEBUG] Fetching stock information...")
-            self._notify("正在获取股票基本信息...")
-            self._notify_agent('data_downloader', 'analyzing', 20, '正在获取股票基本信息...')
-            stock_info = self.data_fetcher.get_stock_info(stock_code)
-            print(f"[DEBUG] Stock information retrieved: {stock_info}")
+            logger.debug("[股票分析] 并行获取所有数据...")
+            self._notify("正在获取股票数据...")
+            self._notify_agent('data_downloader', 'analyzing', 20, '正在并行获取数据...')
+            
+            def fetch_stock_info():
+                self._notify("正在获取股票基本信息...")
+                return self.data_fetcher.get_stock_info(stock_code)
+            
+            def fetch_kline_data():
+                self._notify("正在获取K线数据...")
+                return self.data_fetcher.get_kline_data(stock_code)
+            
+            def fetch_financial_data():
+                self._notify("正在获取财务数据...")
+                return self.data_fetcher.get_financial_data(stock_code)
+            
+            def fetch_fund_flow():
+                self._notify("正在获取资金流向数据...")
+                return self.data_fetcher.get_fund_flow(stock_code)
+            
+            def fetch_market_sentiment():
+                self._notify("正在获取市场情绪数据...")
+                return self.data_fetcher.get_market_sentiment()
+            
+            with ThreadPoolExecutor(max_workers=5) as executor:
+                future_to_name = {
+                    executor.submit(fetch_stock_info): 'stock_info',
+                    executor.submit(fetch_kline_data): 'kline_data',
+                    executor.submit(fetch_financial_data): 'financial_data',
+                    executor.submit(fetch_fund_flow): 'fund_flow',
+                    executor.submit(fetch_market_sentiment): 'market_sentiment'
+                }
+                
+                results = {}
+                pending = set(future_to_name.keys())
+                data_fetch_deadline = time.monotonic() + 15.0
+                while pending:
+                    remaining = data_fetch_deadline - time.monotonic()
+                    if remaining <= 0:
+                        break
+                    done, pending = wait(pending, timeout=remaining, return_when=FIRST_COMPLETED)
+                    for future in done:
+                        name = future_to_name[future]
+                        try:
+                            results[name] = future.result()
+                            logger.debug(f"[股票分析] {name} 获取成功")
+                        except Exception as e:
+                            logger.error(f"[股票分析] {name} 获取失败: {e}")
+                            results[name] = None if name != 'kline_data' else pd.DataFrame()
+                
+                if pending:
+                    for future in pending:
+                        name = future_to_name[future]
+                        future.cancel()
+                        logger.warning(f"[股票分析] {name} 获取超时，已跳过")
+                        results[name] = None if name != 'kline_data' else pd.DataFrame()
+            
+            stock_info = results.get('stock_info') or {}
+            kline_data = results.get('kline_data')
+            if kline_data is None:
+                kline_data = pd.DataFrame()
+            financial_data = results.get('financial_data') or {}
+            fund_flow = results.get('fund_flow') or {}
+            market_sentiment = results.get('market_sentiment') or {}
+            
+            logger.debug(f"[股票分析] 股票信息获取成功: {stock_info}")
+            logger.debug(f"[股票分析] K线数据获取成功, 长度: {len(kline_data) if isinstance(kline_data, pd.DataFrame) else 'N/A'}")
+            logger.debug(f"[股票分析] 财务数据获取成功: {financial_data}")
+            logger.debug(f"[股票分析] 资金流向数据获取成功: {fund_flow}")
+            logger.debug(f"[股票分析] 市场情绪数据获取成功: {market_sentiment}")
             
             stock_data = {
                 'stock_code': stock_code,
@@ -80,43 +164,17 @@ class StockAgent:
                 'volume_ratio': stock_info.get('volume_ratio', ''),
                 'high_52w': stock_info.get('high_52w', ''),
                 'low_52w': stock_info.get('low_52w', ''),
-                'timestamp': stock_info.get('timestamp', datetime.now().isoformat())
+                'timestamp': stock_info.get('timestamp', datetime.now().isoformat()),
+                'kline_data': kline_data.to_dict('records') if isinstance(kline_data, pd.DataFrame) and not kline_data.empty else [],
+                'financial_data': financial_data,
+                'fund_flow': fund_flow,
+                'market_sentiment': market_sentiment
             }
             
-            print("[DEBUG] Fetching K-line data...")
-            self._notify("正在获取K线数据...")
-            self._notify_agent('data_downloader', 'analyzing', 40, '正在获取K线数据...')
-            kline_data = self.data_fetcher.get_kline_data(stock_code)
-            print(f"[DEBUG] K-line data retrieved, length: {len(kline_data) if isinstance(kline_data, pd.DataFrame) else 'N/A'}")
-            if isinstance(kline_data, pd.DataFrame) and not kline_data.empty:
-                kline_data = kline_data.to_dict('records')
-            stock_data['kline_data'] = kline_data
-            
-            print("[DEBUG] Fetching financial data...")
-            self._notify("正在获取财务数据...")
-            self._notify_agent('data_downloader', 'analyzing', 60, '正在获取财务数据...')
-            financial_data = self.data_fetcher.get_financial_data(stock_code)
-            print(f"[DEBUG] Financial data retrieved: {financial_data}")
-            stock_data['financial_data'] = financial_data
-            
-            print("[DEBUG] Fetching fund flow data...")
-            self._notify("正在获取资金流向数据...")
-            self._notify_agent('data_downloader', 'analyzing', 80, '正在获取资金流向数据...')
-            fund_flow = self.data_fetcher.get_fund_flow(stock_code)
-            print(f"[DEBUG] Fund flow data retrieved: {fund_flow}")
-            stock_data['fund_flow'] = fund_flow
-            
-            print("[DEBUG] Fetching market sentiment data...")
-            self._notify("正在获取市场情绪数据...")
-            self._notify_agent('data_downloader', 'analyzing', 90, '正在获取市场情绪数据...')
-            market_sentiment = self.data_fetcher.get_market_sentiment()
-            print(f"[DEBUG] Market sentiment data retrieved: {market_sentiment}")
-            stock_data['market_sentiment'] = market_sentiment
-            
-            print("[DEBUG] Calculating technical indicators...")
+            logger.debug("[股票分析] 正在计算技术指标...")
             self._notify("正在计算技术指标...")
             stock_data['technical_indicators'] = self.stock_analyzer.analyze_technical_indicators(stock_data)
-            print(f"[DEBUG] Technical indicators calculated: {stock_data['technical_indicators']}")
+            logger.debug(f"[股票分析] 技术指标计算完成: {stock_data['technical_indicators']}")
             
             self._notify_agent('data_downloader', 'completed', 100, '数据下载完成')
             
@@ -124,43 +182,55 @@ class StockAgent:
             
             parallel_agents = ['technical_analyst', 'fundamental_analyst', 'risk_manager', 'sentiment_analyst']
             
-            print(f"[DEBUG] Starting parallel agents: {parallel_agents}")
-            for agent_type in parallel_agents:
-                try:
-                    print(f"[DEBUG] Starting {agent_type}...")
-                    self._notify(f"启动 {self.agents[agent_type].name} 分析...")
-                    result = self.agents[agent_type].analyze(stock_data)
-                    print(f"[DEBUG] {agent_type} completed: {result}")
-                    analyses[agent_type] = result
-                except Exception as e:
-                    print(f"[DEBUG] {agent_type} failed: {e}")
-                    self._notify(f"{self.agents[agent_type].name} 分析失败: {str(e)}")
-                    analyses[agent_type] = {
-                        'error': str(e),
-                        'agent_name': self.agents[agent_type].name
-                    }
+            logger.debug(f"[股票分析] 启动并行代理: {parallel_agents}")
             
-            print("[DEBUG] Summarizing analysis results...")
+            # 使用线程池并行执行代理分析
+            with ThreadPoolExecutor(max_workers=len(parallel_agents)) as executor:
+                future_to_agent = {
+                    executor.submit(self.agents[agent_type].analyze, stock_data): agent_type 
+                    for agent_type in parallel_agents
+                }
+                
+                for future in as_completed(future_to_agent):
+                    agent_type = future_to_agent[future]
+                    try:
+                        logger.debug(f"[股票分析] 开始 {agent_type} 分析...")
+                        self._notify(f"启动 {self.agents[agent_type].name} 分析...")
+                        result = future.result()
+                        logger.debug(f"[股票分析] {agent_type} 分析完成: {result}")
+                        analyses[agent_type] = result
+                    except Exception as e:
+                        logger.error(f"[股票分析] {agent_type} 分析失败: {e}")
+                        self._notify(f"{self.agents[agent_type].name} 分析失败: {str(e)}")
+                        analyses[agent_type] = {
+                            'error': str(e),
+                            'agent_name': self.agents[agent_type].name
+                        }
+            
+            logger.debug("[股票分析] 汇总分析结果...")
             self._notify("正在汇总分析结果...")
             
             stock_data['analyses'] = analyses
             
             try:
-                print("[DEBUG] Starting investment strategist...")
+                logger.debug("[股票分析] 启动投资策略制定...")
                 self._notify(f"启动 {self.agents['investment_strategist'].name} 制定策略...")
                 strategy_result = self.agents['investment_strategist'].analyze(stock_data)
-                print(f"[DEBUG] Investment strategist completed: {strategy_result}")
+                logger.debug(f"[股票分析] 投资策略制定完成: {strategy_result}")
                 analyses['investment_strategist'] = strategy_result
             except Exception as e:
-                print(f"[DEBUG] Investment strategist failed: {e}")
+                logger.error(f"[股票分析] 投资策略制定失败: {e}")
                 self._notify(f"{self.agents['investment_strategist'].name} 制定策略失败: {str(e)}")
                 analyses['investment_strategist'] = {
                     'error': str(e),
                     'agent_name': self.agents['investment_strategist'].name
                 }
             
-            print("[DEBUG] Analysis completed successfully")
+            logger.info("[股票分析] 股票分析完成")
             self._notify("分析完成！")
+            
+            # 打印性能统计报告
+            print_stats()
             
             return {
                 'stock_code': stock_code,
@@ -172,10 +242,14 @@ class StockAgent:
             }
         
         except Exception as e:
-            print(f"[DEBUG] Analysis failed with error: {e}")
+            logger.error(f"[股票分析] 分析失败: {e}")
             import traceback
-            traceback.print_exc()
+            logger.exception("[股票分析] 分析失败详细信息:")
             self._notify(f"分析失败: {str(e)}")
+            
+            # 打印性能统计报告（即使失败）
+            print_stats()
+            
             return {
                 'stock_code': stock_code,
                 'error': str(e),
@@ -194,12 +268,15 @@ class StockAgent:
             })
         return agent_info
     
+    @performance_monitor
     def backtest_strategy(self, stock_code: str, strategy_content: str = None, strategy_signals: Dict[str, Any] = None) -> Dict[str, Any]:
-        print(f"[DEBUG] Starting backtest for stock code: {stock_code}")
+        # 重置性能统计
+        reset_stats()
+        logger.info(f"[策略回测] 开始回测股票代码: {stock_code}")
         self._notify(f"开始回测股票 {stock_code} 的策略...")
         
         try:
-            print("[DEBUG] Fetching historical data for backtest...")
+            logger.debug("[策略回测] 获取回测历史数据...")
             self._notify("正在获取历史数据...")
             
             kline_data = self.data_fetcher.get_kline_data(stock_code)
@@ -207,12 +284,12 @@ class StockAgent:
             if kline_data.empty:
                 raise Exception("无法获取历史K线数据")
             
-            print(f"[DEBUG] Historical data retrieved, length: {len(kline_data)}")
+            logger.debug(f"[策略回测] 历史数据获取成功, 长度: {len(kline_data)}")
             
             if strategy_signals is None:
                 strategy_signals = {}
             
-            print("[DEBUG] Running backtest engine...")
+            logger.debug("[策略回测] 运行回测引擎...")
             self._notify("正在运行回测引擎...")
             
             backtest_result = self.backtest_engine.run_backtest(
@@ -221,7 +298,7 @@ class StockAgent:
                 strategy_content=strategy_content
             )
             
-            print("[DEBUG] Generating visualizations...")
+            logger.debug("[策略回测] 生成可视化图表...")
             self._notify("正在生成回测可视化...")
             
             visualizations = {
@@ -233,14 +310,17 @@ class StockAgent:
             
             backtest_result['visualizations'] = visualizations
             
-            print("[DEBUG] Generating backtest report...")
+            logger.debug("[策略回测] 生成回测报告...")
             self._notify("正在生成回测报告...")
             
             report = self.backtest_engine.generate_backtest_report(backtest_result)
             backtest_result['report'] = report
             
-            print("[DEBUG] Backtest completed successfully")
+            logger.info("[策略回测] 回测完成")
             self._notify("回测完成！")
+            
+            # 打印性能统计报告
+            print_stats()
             
             return {
                 'stock_code': stock_code,
@@ -249,10 +329,14 @@ class StockAgent:
             }
         
         except Exception as e:
-            print(f"[DEBUG] Backtest failed with error: {e}")
+            logger.error(f"[策略回测] 回测失败: {e}")
             import traceback
-            traceback.print_exc()
+            logger.exception("[策略回测] 回测失败详细信息:")
             self._notify(f"回测失败: {str(e)}")
+            
+            # 打印性能统计报告（即使失败）
+            print_stats()
+            
             return {
                 'stock_code': stock_code,
                 'error': str(e),

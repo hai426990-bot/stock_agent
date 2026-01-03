@@ -3,6 +3,7 @@ import numpy as np
 from typing import Dict, Any, List, Optional, Tuple
 from datetime import datetime, timedelta
 import re
+from .logger import logger
 
 
 class SignalParser:
@@ -23,49 +24,59 @@ class SignalParser:
             'position_size': None,
             'hold_period': None
         }
+        logger.debug(f"开始解析策略内容，长度: {len(strategy_content)}")
         
         content_lower = strategy_content.lower()
         
         for buy_keyword in self.signal_keywords['buy']:
             if buy_keyword in strategy_content:
                 signals['recommendation'] = 'buy'
+                logger.debug(f"检测到买入信号: {buy_keyword}")
                 break
         
         for sell_keyword in self.signal_keywords['sell']:
             if sell_keyword in strategy_content:
                 signals['recommendation'] = 'sell'
+                logger.debug(f"检测到卖出信号: {sell_keyword}")
                 break
         
         for hold_keyword in self.signal_keywords['hold']:
             if hold_keyword in strategy_content:
                 if signals['recommendation'] is None:
                     signals['recommendation'] = 'hold'
+                    logger.debug(f"检测到持有信号: {hold_keyword}")
         
         buy_price = self._extract_price(strategy_content, ['买入价格', '建仓价格', '买入价'])
         if buy_price:
             signals['buy_price'] = buy_price
+            logger.debug(f"提取到买入价格: {buy_price}")
         
         target_price = self._extract_price(strategy_content, ['目标价格', '目标价', '目标价位'])
         if target_price:
             signals['target_price'] = target_price
+            logger.debug(f"提取到目标价格: {target_price}")
         
         stop_loss = self._extract_price(strategy_content, ['止损价格', '止损价', '止损位'])
         if stop_loss:
             signals['stop_loss'] = stop_loss
+            logger.debug(f"提取到止损价格: {stop_loss}")
         
         position_size = self._extract_percentage(strategy_content, ['建议仓位', '仓位', '配置比例'])
         if position_size:
             signals['position_size'] = position_size
+            logger.debug(f"提取到仓位比例: {position_size}")
         
         hold_period = self._extract_period(strategy_content, ['持仓周期', '预计持仓', '持有时间'])
         if hold_period:
             signals['hold_period'] = hold_period
+            logger.debug(f"提取到持仓周期: {hold_period}")
         
+        logger.debug(f"解析完成，信号: {signals}")
         return signals
     
     def _extract_price(self, text: str, keywords: List[str]) -> Optional[float]:
         for keyword in keywords:
-            pattern = rf'{keyword}[：:]\s*(\d+\.?\d*)'
+            pattern = rf'{keyword}[：:：]\s*([0-9]+\.?[0-9]*)'
             match = re.search(pattern, text)
             if match:
                 try:
@@ -76,7 +87,7 @@ class SignalParser:
     
     def _extract_percentage(self, text: str, keywords: List[str]) -> Optional[float]:
         for keyword in keywords:
-            pattern = rf'{keyword}[：:]\s*(\d+\.?\d*)%'
+            pattern = rf'{keyword}[：:：]\s*([0-9]+\.?[0-9]*)%'
             match = re.search(pattern, text)
             if match:
                 try:
@@ -87,7 +98,7 @@ class SignalParser:
     
     def _extract_period(self, text: str, keywords: List[str]) -> Optional[str]:
         for keyword in keywords:
-            pattern = rf'{keyword}[：:]\s*([^\n]+)'
+            pattern = rf'{keyword}[：:：]\s*([^\n]+)'
             match = re.search(pattern, text)
             if match:
                 return match.group(1).strip()
@@ -108,9 +119,11 @@ class BacktestEngine:
             parsed_signals = self.signal_parser.parse_strategy_report(strategy_content)
             strategy_signals.update(parsed_signals)
         
-        if not stock_data.empty:
-            stock_data = stock_data.copy()
-            stock_data = stock_data.sort_values('日期').reset_index(drop=True)
+        if stock_data.empty:
+            raise Exception("股票数据为空，无法进行回测")
+        
+        stock_data = stock_data.copy()
+        stock_data = stock_data.sort_values('日期').reset_index(drop=True)
         
         capital = self.initial_capital
         position = 0
@@ -123,6 +136,19 @@ class BacktestEngine:
         stop_loss = strategy_signals.get('stop_loss')
         target_price = strategy_signals.get('target_price')
         position_size = strategy_signals.get('position_size', 1.0)
+        
+        if not buy_price:
+            current_price = stock_data.iloc[0]['收盘']
+            buy_price = current_price
+            logger.debug(f"未找到买入价格，使用当前价格: {buy_price}")
+        
+        if not stop_loss:
+            stop_loss = buy_price * 0.95
+            logger.debug(f"未找到止损价格，设置为买入价的95%: {stop_loss}")
+        
+        if not target_price:
+            target_price = buy_price * 1.10
+            logger.debug(f"未找到目标价格，设置为买入价的110%: {target_price}")
         
         in_position = False
         

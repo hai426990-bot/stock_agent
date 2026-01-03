@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
 from typing import Dict, Any
+from .performance_monitor import performance_monitor
 
 class StockAnalyzer:
     @staticmethod
@@ -12,6 +13,7 @@ class StockAnalyzer:
         return ma_dict
     
     @staticmethod
+    @performance_monitor
     def calculate_macd(data: pd.DataFrame) -> Dict[str, Any]:
         if len(data) < 26:
             return {}
@@ -31,6 +33,7 @@ class StockAnalyzer:
         }
     
     @staticmethod
+    @performance_monitor
     def calculate_kdj(data: pd.DataFrame, n: int = 9, m1: int = 3, m2: int = 3) -> Dict[str, Any]:
         if len(data) < n:
             return {}
@@ -51,6 +54,7 @@ class StockAnalyzer:
         }
     
     @staticmethod
+    @performance_monitor
     def calculate_rsi(data: pd.DataFrame, period: int = 14) -> Dict[str, Any]:
         if len(data) < period + 1:
             return {}
@@ -68,6 +72,7 @@ class StockAnalyzer:
         }
     
     @staticmethod
+    @performance_monitor
     def calculate_boll(data: pd.DataFrame, period: int = 20, std_dev: int = 2) -> Dict[str, Any]:
         if len(data) < period:
             return {}
@@ -139,6 +144,7 @@ class StockAnalyzer:
         return {'patterns': patterns if patterns else ['无明显形态']}
     
     @staticmethod
+    @performance_monitor
     def calculate_support_resistance(data: pd.DataFrame) -> Dict[str, Any]:
         if len(data) < 20:
             return {}
@@ -214,6 +220,7 @@ class StockAnalyzer:
         }
     
     @staticmethod
+    @performance_monitor
     def calculate_risk_metrics(data: pd.DataFrame, risk_free_rate: float = 0.03) -> Dict[str, Any]:
         if len(data) < 60:
             return {}
@@ -236,6 +243,7 @@ class StockAnalyzer:
         }
     
     @staticmethod
+    @performance_monitor
     def analyze_technical_indicators(stock_data: Dict[str, Any]) -> Dict[str, Any]:
         kline_data = stock_data.get('kline_data', pd.DataFrame())
         
