@@ -166,10 +166,50 @@ class StockAgent:
                 'low_52w': stock_info.get('low_52w', ''),
                 'timestamp': stock_info.get('timestamp', datetime.now().isoformat()),
                 'kline_data': kline_data.to_dict('records') if isinstance(kline_data, pd.DataFrame) and not kline_data.empty else [],
-                'financial_data': financial_data,
-                'fund_flow': fund_flow,
-                'market_sentiment': market_sentiment
+                'financial_data': financial_data or {},
+                'fund_flow': fund_flow or {},
+                'market_sentiment': market_sentiment or {
+                    'up_count': 0,
+                    'down_count': 0,
+                    'flat_count': 0,
+                    'total_count': 0,
+                    'up_down_ratio': 0,
+                    'market_heat': 0,
+                    'activity_level': '0%',
+                    'limit_up_count': 0,
+                    'limit_down_count': 0
+                }
             }
+            
+            # 数据完整性检查和默认值处理
+            logger.debug("[股票分析] 开始数据完整性检查...")
+            
+            # 确保财务数据有默认值
+            if not stock_data['financial_data']:
+                stock_data['financial_data'] = {
+                    'roe': '',
+                    'roa': '',
+                    'gross_margin': '',
+                    'net_margin': '',
+                    'debt_ratio': '',
+                    'current_ratio': '',
+                    'revenue_growth': '',
+                    'profit_growth': ''
+                }
+            
+            # 确保资金流向数据有默认值
+            if not stock_data['fund_flow']:
+                stock_data['fund_flow'] = {
+                    'main_net_inflow': '',
+                    'main_net_inflow_pct': '',
+                    'super_large_net_inflow': '',
+                    'large_net_inflow': '',
+                    'medium_net_inflow': '',
+                    'small_net_inflow': ''
+                }
+            
+            logger.debug("[股票分析] 数据完整性检查完成")
+            logger.debug(f"[股票分析] 最终股票数据: {stock_data}")
             
             logger.debug("[股票分析] 正在计算技术指标...")
             self._notify("正在计算技术指标...")

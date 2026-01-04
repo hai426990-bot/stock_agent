@@ -184,10 +184,14 @@ async function handleAnalyzeClick() {
     try {
         // 先获取K线数据
         const klineData = await fetchKlineData(stockCode);
+        console.log('获取到的K线数据:', klineData);
         if (klineData) {
             // 更新K线图表
+            console.log('准备更新K线图表，chartManager:', window.chartManager);
             updateChartInfo(klineData);
             elements.chartSection.style.display = 'block';
+        } else {
+            console.log('K线数据为空');
         }
         
         // 发送分析请求
@@ -336,6 +340,20 @@ function updateChartInfo(klineData) {
     document.getElementById('currentPrice').textContent = last['收盘'] + ' 元';
     document.getElementById('priceChange').className = `price-change ${changeClass}`;
     document.getElementById('priceChange').textContent = `${changeSign}${change.toFixed(2)} (${changeSign}${changePercent}%)`;
+    
+    // 更新K线图
+    if (window.chartManager) {
+        // 转换K线数据格式为图表所需格式
+        const chartData = klineData.map(item => [
+            item['日期'],  // 日期
+            item['开盘'],  // 开盘价
+            item['收盘'],  // 收盘价
+            item['最低'],  // 最低价
+            item['最高'],  // 最高价
+            item['成交量'] // 成交量
+        ]);
+        window.chartManager.updateKlineChart(chartData);
+    }
 }
 
 // 初始化进度显示
@@ -728,11 +746,22 @@ function renderHistory() {
 }
 
 // 查看历史记录项
-function viewHistoryItem(id) {
+async function viewHistoryItem(id) {
     const item = appState.analysisHistory.find(h => h.id === id);
     if (item) {
         appState.currentStockCode = item.stockCode;
         elements.stockCode.value = item.stockCode;
+        
+        // 获取K线数据并显示图表
+        try {
+            const klineData = await fetchKlineData(item.stockCode);
+            if (klineData) {
+                updateChartInfo(klineData);
+                elements.chartSection.style.display = 'block';
+            }
+        } catch (error) {
+            console.error('获取K线数据失败:', error);
+        }
         
         // 直接显示结果
         initializeProgress();

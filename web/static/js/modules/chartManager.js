@@ -372,18 +372,18 @@ class ChartManager {
                         left: '8%',
                         right: '8%',
                         top: '12%',
-                        height: '50%'
+                        height: '45%'
                     },
                     {
                         left: '8%',
                         right: '8%',
-                        top: '65%',
+                        top: '62%',
                         height: '12%'
                     },
                     {
                         left: '8%',
                         right: '8%',
-                        top: '80%',
+                        top: '77%',
                         height: '12%'
                     }
                 ],
@@ -401,7 +401,14 @@ class ChartManager {
                         axisLabel: {
                             color: '#8c8c8c',
                             fontSize: 10,
-                            rotate: 45
+                            rotate: 30,
+                            interval: 'auto',
+                            formatter: function(value) {
+                                if (value && value.length >= 10) {
+                                    return value.substring(5, 10);
+                                }
+                                return value;
+                            }
                         }
                     },
                     {
@@ -2045,6 +2052,5 @@ class ChartManager {
     }
 }
 
-// 导出单例实例
 const chartManager = new ChartManager();
-export default chartManager;
+window.chartManager = chartManager;

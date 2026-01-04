@@ -454,11 +454,33 @@ class DataFetcher:
                 
                 if market_sentiment is None:
                     logger.info(f"[数据获取] 市场情绪数据为None")
-                    result = {}
+                    # 返回默认结果
+                    result = {
+                        'up_count': 0,
+                        'down_count': 0,
+                        'flat_count': 0,
+                        'total_count': 0,
+                        'up_down_ratio': 0,
+                        'market_heat': 0,
+                        'activity_level': '0%',
+                        'limit_up_count': 0,
+                        'limit_down_count': 0
+                    }
                 elif isinstance(market_sentiment, pd.DataFrame):
                     if market_sentiment.empty:
                         logger.info(f"[数据获取] 市场情绪数据为空DataFrame")
-                        result = {}
+                        # 返回默认结果
+                        result = {
+                            'up_count': 0,
+                            'down_count': 0,
+                            'flat_count': 0,
+                            'total_count': 0,
+                            'up_down_ratio': 0,
+                            'market_heat': 0,
+                            'activity_level': '0%',
+                            'limit_up_count': 0,
+                            'limit_down_count': 0
+                        }
                     else:
                         try:
                             sentiment_dict = {}
@@ -467,7 +489,18 @@ class DataFetcher:
                                     sentiment_dict[row['item']] = row['value']
                         except Exception as e:
                             logger.error(f"[数据获取] 解析市场情绪DataFrame失败: 错误: {str(e)}")
-                            result = {}
+                            # 返回默认结果
+                            result = {
+                                'up_count': 0,
+                                'down_count': 0,
+                                'flat_count': 0,
+                                'total_count': 0,
+                                'up_down_ratio': 0,
+                                'market_heat': 0,
+                                'activity_level': '0%',
+                                'limit_up_count': 0,
+                                'limit_down_count': 0
+                            }
                         else:
                             up_count = sentiment_dict.get('上涨', 0)
                             down_count = sentiment_dict.get('下跌', 0)
@@ -520,7 +553,18 @@ class DataFetcher:
                         logger.debug(f"[数据获取] 解析市场情绪字典成功")
                     except Exception as e:
                         logger.error(f"[数据获取] 解析市场情绪数据失败: 错误: {str(e)}")
-                        result = {}
+                        # 返回默认结果
+                        result = {
+                            'up_count': 0,
+                            'down_count': 0,
+                            'flat_count': 0,
+                            'total_count': 0,
+                            'up_down_ratio': 0,
+                            'market_heat': 0,
+                            'activity_level': '0%',
+                            'limit_up_count': 0,
+                            'limit_down_count': 0
+                        }
             
             except Exception as e:
                 if attempt == max_retries - 1:
