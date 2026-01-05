@@ -92,7 +92,7 @@ class SignalParser:
             if match:
                 try:
                     return float(match.group(1)) / 100
-                except:
+                except (ValueError, TypeError, AttributeError):
                     continue
         return None
     

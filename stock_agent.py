@@ -23,8 +23,8 @@ from tools.performance_monitor import performance_monitor, print_stats, reset_st
 from workflows.analysis_workflow import AnalysisWorkflow
 
 class StockAgent:
-    def __init__(self, callback=None, session_id=None):
-        self.data_fetcher = DataFetcher()
+    def __init__(self, callback=None, session_id=None, data_fetcher=None):
+        self.data_fetcher = data_fetcher if data_fetcher else DataFetcher()
         self.stock_analyzer = StockAnalyzer()
         self.callback = callback
         self.session_id = session_id
@@ -96,82 +96,14 @@ class StockAgent:
         self._notify_agent('data_downloader', 'analyzing', 10, '开始下载数据...')
         
         try:
-            logger.debug("[股票分析] 并行获取所有数据...")
+            logger.debug("[股票分析] 获取股票综合数据...")
             self._notify("正在获取股票数据...")
-            self._notify_agent('data_downloader', 'analyzing', 20, '正在并行获取数据...')
             
-            def fetch_stock_info():
-                self._notify("正在获取股票基本信息...")
-                return self.data_fetcher.get_stock_info(stock_code)
-            
-            def fetch_kline_data():
-                self._notify("正在获取K线数据...")
-                return self.data_fetcher.get_kline_data(stock_code)
-            
-            def fetch_financial_data():
-                self._notify("正在获取财务数据...")
-                return self.data_fetcher.get_financial_data(stock_code)
-            
-            def fetch_fund_flow():
-                self._notify("正在获取资金流向数据...")
-                return self.data_fetcher.get_fund_flow(stock_code)
-            
-            def fetch_market_sentiment():
-                self._notify("正在获取市场情绪数据...")
-                return self.data_fetcher.get_market_sentiment()
-            
-            def fetch_public_opinion():
-                self._notify("正在获取舆情数据...")
-                return self.data_fetcher.get_public_opinion(stock_code)
-            
-            def fetch_industry_comparison():
-                self._notify("正在获取行业比较数据...")
-                return self.data_fetcher.get_industry_comparison(stock_code)
-            
-            def fetch_valuation_data():
-                self._notify("正在获取估值数据...")
-                return self.data_fetcher.get_valuation_data(stock_code)
-            
-            with ThreadPoolExecutor(max_workers=8) as executor:
-                future_to_name = {
-                    executor.submit(fetch_stock_info): 'stock_info',
-                    executor.submit(fetch_kline_data): 'kline_data',
-                    executor.submit(fetch_financial_data): 'financial_data',
-                    executor.submit(fetch_fund_flow): 'fund_flow',
-                    executor.submit(fetch_market_sentiment): 'market_sentiment',
-                    executor.submit(fetch_public_opinion): 'public_opinion',
-                    executor.submit(fetch_industry_comparison): 'industry_comparison',
-                    executor.submit(fetch_valuation_data): 'valuation_data'
-                }
-                
-                results = {}
-                pending = set(future_to_name.keys())
-                data_fetch_deadline = time.monotonic() + 20.0  # 增加超时时间
-                while pending:
-                    remaining = data_fetch_deadline - time.monotonic()
-                    if remaining <= 0:
-                        break
-                    done, pending = wait(pending, timeout=remaining, return_when=FIRST_COMPLETED)
-                    for future in done:
-                        name = future_to_name[future]
-                        try:
-                            results[name] = future.result()
-                            logger.debug(f"[股票分析] {name} 获取成功")
-                        except Exception as e:
-                            logger.error(f"[股票分析] {name} 获取失败: {e}")
-                            results[name] = None if name != 'kline_data' else pd.DataFrame()
-                
-                if pending:
-                    for future in pending:
-                        name = future_to_name[future]
-                        future.cancel()
-                        logger.warning(f"[股票分析] {name} 获取超时，已跳过")
-                        results[name] = None if name != 'kline_data' else pd.DataFrame()
+            # 使用 DataFetcher 并行获取所有数据
+            results = self.data_fetcher.get_comprehensive_data(stock_code)
             
             stock_info = results.get('stock_info') or {}
-            kline_data = results.get('kline_data')
-            if kline_data is None:
-                kline_data = pd.DataFrame()
+            kline_records = results.get('kline_data') or []
             financial_data = results.get('financial_data') or {}
             fund_flow = results.get('fund_flow') or {}
             market_sentiment = results.get('market_sentiment') or {}
@@ -180,12 +112,7 @@ class StockAgent:
             valuation_data = results.get('valuation_data') or {}
             
             logger.debug(f"[股票分析] 股票信息获取成功: {stock_info}")
-            logger.debug(f"[股票分析] K线数据获取成功, 长度: {len(kline_data) if isinstance(kline_data, pd.DataFrame) else 'N/A'}")
-            logger.debug(f"[股票分析] 财务数据获取成功: {financial_data}")
-            logger.debug(f"[股票分析] 行业比较数据获取成功: {industry_comparison}")
-            logger.debug(f"[股票分析] 估值数据获取成功: {valuation_data}")
-            logger.debug(f"[股票分析] 资金流向数据获取成功: {fund_flow}")
-            logger.debug(f"[股票分析] 市场情绪数据获取成功: {market_sentiment}")
+            logger.debug(f"[股票分析] K线数据获取成功, 长度: {len(kline_records)}")
             
             stock_data = {
                 'stock_code': stock_code,
@@ -199,9 +126,9 @@ class StockAgent:
                 'high_52w': stock_info.get('high_52w', ''),
                 'low_52w': stock_info.get('low_52w', ''),
                 'timestamp': stock_info.get('timestamp', datetime.now().isoformat()),
-                'kline_data': kline_data.to_dict('records') if isinstance(kline_data, pd.DataFrame) and not kline_data.empty else [],
-                'financial_data': financial_data or {},
-                'fund_flow': fund_flow or {},
+                'kline_data': kline_records,
+                'financial_data': financial_data,
+                'fund_flow': fund_flow,
                 'market_sentiment': market_sentiment or {
                     'up_count': 0,
                     'down_count': 0,

@@ -74,11 +74,9 @@
                             </div>
                             <div class="input-group">
                                 <label for="sectorName" class="input-label">板块名称</label>
-                                <div class="sector-select-container">
-                                    <select id="sectorName" class="sector-select">
-                                        <option value="">请先选择板块分类</option>
-                                        <!-- 动态生成板块选项 -->
-                                    </select>
+                                <div class="autocomplete-wrapper">
+                                    <input type="text" id="sectorName" placeholder="请输入板块名称（如：白酒）" autocomplete="off" class="stock-input">
+                                    <div class="autocomplete-dropdown" id="sectorAutocompleteDropdown"></div>
                                 </div>
                             </div>
                             <div class="button-group">

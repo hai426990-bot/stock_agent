@@ -22,8 +22,8 @@ class SocketManager {
             reconnectionAttempts: Infinity,
             reconnectionDelay: 1000,
             reconnectionDelayMax: 5000,
-            timeout: 20000,
-            pingTimeout: 60000,
+            timeout: 30000,
+            pingTimeout: 300000,
             pingInterval: 25000
         });
 

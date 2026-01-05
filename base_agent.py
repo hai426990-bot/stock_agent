@@ -86,22 +86,26 @@ class BaseAgent(ABC):
             logger.debug(f"{self.name}: Sending request to LLM with timeout {Config.AGENT_TIMEOUT}s")
             start_time = time.time()
             
-            # 添加重试逻辑
-            max_retries = 2
-            retry_delay = 1.0
+            max_retries = 3
+            retry_delay = 2.0
             response = None
+            last_error = None
             
             for attempt in range(max_retries):
                 try:
                     response = self.llm.invoke(messages)
                     break
                 except Exception as e:
+                    last_error = e
                     if attempt == max_retries - 1:
                         logger.error(f"{self.name}: LLM request failed after {max_retries} attempts: {str(e)}")
                         raise
                     logger.warning(f"{self.name}: LLM request failed (attempt {attempt+1}/{max_retries}), retrying in {retry_delay}s: {str(e)}")
                     time.sleep(retry_delay)
                     retry_delay *= 2
+            
+            if response is None and last_error:
+                raise last_error
             
             end_time = time.time()
             logger.debug(f"{self.name}: LLM response received after {end_time - start_time:.2f}s")

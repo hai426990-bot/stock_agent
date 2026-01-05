@@ -139,14 +139,15 @@ function initEventListeners() {
     elements.stockCode.addEventListener('input', debounce(handleStockInput, 300));
     elements.stockCode.addEventListener('keypress', handleStockKeyPress);
     
+    // 板块名称输入事件
+    elements.sectorName.addEventListener('input', debounce(handleSectorInput, 300));
+    elements.sectorName.addEventListener('keypress', handleSectorKeyPress);
+    
     // 板块分类选择事件
     const sectorCategory = document.getElementById('sectorCategory');
     if (sectorCategory) {
         sectorCategory.addEventListener('change', handleCategoryChange);
     }
-    
-    // 板块名称按键事件
-    elements.sectorName.addEventListener('keypress', handleSectorKeyPress);
     
     // 按钮事件
     elements.analyzeBtn.addEventListener('click', handleAnalyzeClick);
@@ -156,6 +157,7 @@ function initEventListeners() {
     
     // 自动补全点击事件（通过事件委托）
     elements.autocompleteDropdown.addEventListener('click', handleAutocompleteClick);
+    elements.sectorAutocompleteDropdown.addEventListener('click', handleSectorAutocompleteClick);
     
     // 点击页面其他区域关闭自动补全
     document.addEventListener('click', handleDocumentClick);
@@ -166,10 +168,10 @@ function initSectorSelection() {
     // 加载板块分类列表
     loadSectorCategories();
     
-    // 禁用板块名称选择框
-    const sectorSelect = document.getElementById('sectorName');
-    if (sectorSelect) {
-        sectorSelect.disabled = true;
+    // 启用板块名称输入框（支持自动补全搜索）
+    const sectorInput = document.getElementById('sectorName');
+    if (sectorInput) {
+        sectorInput.disabled = false;
     }
 }
 
@@ -190,6 +192,17 @@ async function handleStockInput() {
         showAutocomplete(results);
     } else {
         hideAutocomplete();
+    }
+}
+
+// 处理板块名称输入
+async function handleSectorInput() {
+    const keyword = elements.sectorName.value.trim();
+    if (keyword.length >= 1) {
+        const results = await searchSectors(keyword);
+        showSectorAutocomplete(results);
+    } else {
+        hideSectorAutocomplete();
     }
 }
 
@@ -353,13 +366,10 @@ async function loadSectorCategories() {
 // 处理板块分类选择变化
 function handleCategoryChange() {
     const category = document.getElementById('sectorCategory').value;
-    const sectorSelect = document.getElementById('sectorName');
-    
-    // 清空板块选项
-    sectorSelect.innerHTML = '<option value="">请选择板块名称</option>';
+    const sectorInput = document.getElementById('sectorName');
     
     if (!category) {
-        sectorSelect.disabled = true;
+        // 如果没有选择分类，允许手动输入搜索
         return;
     }
     
@@ -375,18 +385,9 @@ async function loadSectorsByCategory(category) {
         if (data.success) {
             const categories = data.data.categories;
             const sectors = categories[category] || [];
-            const sectorSelect = document.getElementById('sectorName');
             
-            // 启用板块选择
-            sectorSelect.disabled = false;
-            
-            // 添加板块选项
-            sectors.forEach(sector => {
-                const option = document.createElement('option');
-                option.value = sector.sector_name;
-                option.textContent = sector.sector_name;
-                sectorSelect.appendChild(option);
-            });
+            // 将分类下的板块显示在自动补全列表中
+            showSectorAutocomplete(sectors);
         }
     } catch (error) {
         console.error('加载板块列表失败:', error);
@@ -523,10 +524,12 @@ function showSectorAutocomplete(results) {
     
     let html = '<div class="autocomplete-items">';
     results.forEach(sector => {
+        // 兼容字符串和对象格式
+        const name = typeof sector === 'string' ? sector : sector.sector_name;
         html += `
-            <div class="autocomplete-item" data-sector="${sector.sector_name}">
+            <div class="autocomplete-item" data-sector="${name}">
                 <div class="autocomplete-item-header">
-                    <span class="stock-code">${sector.sector_name}</span>
+                    <span class="stock-code">${name}</span>
                 </div>
             </div>
         `;

@@ -96,8 +96,18 @@ class AnalysisWorkflow:
             elif state.analysis_type == 'sector':
                 # 下载板块数据
                 logger.debug(f"[工作流] 开始下载板块数据，板块名称: {state.sector_name}")
-                self.stock_agent._notify_agent('data_downloader', 'analyzing', 10, '开始下载板块数据...')
+                self.stock_agent._notify_agent('data_downloader', 'analyzing', 10, f'正在准备分析板块: {state.sector_name}...')
+                
+                # 在获取详细数据前先发送一条消息
+                self.stock_agent._notify(f"正在获取 {state.sector_name} 板块的数据，这可能需要一些时间...")
+                
+                # 获取板块数据
                 sector_data = self.stock_agent.data_fetcher.get_sector_data(state.sector_name)
+                
+                if not sector_data or sector_data.get('component_count', 0) == 0:
+                    logger.warning(f"[工作流] 板块 {state.sector_name} 数据获取结果为空")
+                    self.stock_agent._notify(f"警告：未能获取到 {state.sector_name} 板块的有效成分股数据。")
+                
                 logger.debug(f"[工作流] 板块数据下载完成，数据类型: {type(sector_data)}")
                 self.stock_agent._notify_agent('data_downloader', 'completed', 100, '板块数据下载完成')
                 new_state = state.model_copy(update={
@@ -156,15 +166,20 @@ class AnalysisWorkflow:
                     ('sector_risk_analyst', '板块风险分析师')
                 ]
                 
-                for agent_key, agent_name in sector_analysts:
+                total_analysts = len(sector_analysts)
+                for i, (agent_key, agent_name) in enumerate(sector_analysts):
                     try:
+                        progress = int(20 + (i / total_analysts) * 70)
                         logger.info(f"[工作流] 开始执行 {agent_name} (agent_key: {agent_key})")
                         analyst = self.stock_agent.agents[agent_key]
-                        self.stock_agent._notify(f"启动 {analyst.name} 分析...")
+                        self.stock_agent._notify(f"正在执行 {analyst.name} 分析 ({i+1}/{total_analysts})...")
+                        self.stock_agent._notify_agent(agent_key, 'analyzing', progress, f"正在生成 {agent_name} 报告...")
+                        
                         logger.debug(f"[工作流] 调用 {agent_name}.analyze() 方法...")
                         result = analyst.analyze(sector_data)
                         logger.info(f"[工作流] {agent_name}分析完成，结果类型: {type(result)}")
                         analyses[agent_key] = result
+                        self.stock_agent._notify_agent(agent_key, 'completed', 100, f"{agent_name}分析完成")
                     except Exception as e:
                         logger.error(f"[工作流] {agent_name}分析失败: {e}")
                         import traceback
@@ -204,9 +219,14 @@ class AnalysisWorkflow:
         try:
             logger.info(f"[工作流] 开始生成报告，类型: {state.analysis_type}")
             
+            # 确保分析结果不为空
+            if not state.analyses:
+                logger.warning(f"[工作流] 分析结果为空")
+                raise Exception("未生成任何分析结果")
+            
             # 确保所有分析师结果都已完成
             all_completed = all(
-                analysis.get('status', 'completed') == 'completed' 
+                isinstance(analysis, dict) and (analysis.get('status') in ['completed', 'success'] or 'result' in analysis or 'raw_response' in analysis)
                 for analysis in state.analyses.values()
             )
             

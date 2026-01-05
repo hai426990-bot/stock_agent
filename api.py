@@ -16,6 +16,17 @@ import pandas as pd
 import threading
 import time
 
+# 验证配置
+config_validation = Config.validate()
+if not config_validation['valid']:
+    logger.error("配置验证失败:")
+    for error in config_validation['errors']:
+        logger.error(f"  - {error}")
+if config_validation['warnings']:
+    logger.warning("配置警告:")
+    for warning in config_validation['warnings']:
+        logger.warning(f"  - {warning}")
+
 _data_fetcher_singleton = None
 _data_fetcher_lock = Lock()
 
@@ -37,7 +48,7 @@ app.config['SECRET_KEY'] = Config.FLASK_SECRET_KEY
 socketio = SocketIO(
     app,
     cors_allowed_origins="*",
-    ping_timeout=60,
+    ping_timeout=300,
     ping_interval=25,
     async_mode='eventlet',
     logger=Config.FLASK_DEBUG,
@@ -213,6 +224,7 @@ def get_agents():
 def analyze_stock():
     data = request.json
     if not data:
+        logger.warning("分析请求：无效的请求数据")
         return jsonify({
             'success': False,
             'error': '无效的请求数据'
@@ -223,18 +235,21 @@ def analyze_stock():
     
     # 验证股票代码格式（6位数字）
     if not stock_code or not re.match(r'^\d{6}$', stock_code):
+        logger.warning(f"分析请求：无效的股票代码: {stock_code}")
         return jsonify({
             'success': False,
             'error': '请提供有效的6位股票代码'
         }), 400
     
     if not session_id or not isinstance(session_id, str):
+        logger.warning("分析请求：无效的会话ID")
         return jsonify({
             'success': False,
             'error': '会话ID无效，请刷新页面重试'
         }), 400
     
     task_id = str(uuid.uuid4())
+    logger.info(f"创建分析任务: task_id={task_id}, stock_code={stock_code}, session_id={session_id}")
     
     def create_callback(sid):
         def callback(message):
@@ -247,7 +262,7 @@ def analyze_stock():
         
         try:
             logger.info(f"开始分析股票: {stock_code}, 会话ID: {session_id}")
-            stock_agent = StockAgent(callback=create_callback(session_id), session_id=session_id)
+            stock_agent = StockAgent(callback=create_callback(session_id), session_id=session_id, data_fetcher=_get_data_fetcher())
             
             # 使用langgraph工作流进行分析
             workflow_result = stock_agent.analysis_workflow.run({
@@ -473,7 +488,7 @@ def analyze_sector():
         
         try:
             logger.info(f"开始分析板块: {sector_name}, 会话ID: {session_id}")
-            stock_agent = StockAgent(callback=create_callback(session_id), session_id=session_id)
+            stock_agent = StockAgent(callback=create_callback(session_id), session_id=session_id, data_fetcher=_get_data_fetcher())
             
             # 使用langgraph工作流进行分析
             workflow_result = stock_agent.analysis_workflow.run({

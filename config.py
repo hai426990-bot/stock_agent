@@ -1,21 +1,40 @@
 import os
 from dotenv import load_dotenv
+from typing import Dict, Any
 
 load_dotenv()
 
 class Config:
-    OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
-    OPENAI_BASE_URL = os.getenv('OPENAI_BASE_URL', 'https://api.openai.com/v1')
-    OPENAI_MODEL = os.getenv('OPENAI_MODEL', 'gpt-4')
-    FLASK_SECRET_KEY = os.getenv('FLASK_SECRET_KEY', 'dev-secret-key')
-    FLASK_DEBUG = os.getenv('FLASK_DEBUG', 'True').lower() == 'true'
+    OPENAI_API_KEY: str = os.getenv('OPENAI_API_KEY', '')
+    OPENAI_BASE_URL: str = os.getenv('OPENAI_BASE_URL', 'https://api.openai.com/v1')
+    OPENAI_MODEL: str = os.getenv('OPENAI_MODEL', 'gpt-4')
+    FLASK_SECRET_KEY: str = os.getenv('FLASK_SECRET_KEY', 'dev-secret-key')
+    FLASK_DEBUG: bool = os.getenv('FLASK_DEBUG', 'True').lower() == 'true'
     
-    AGENT_TEMPERATURE = 0.3
-    AGENT_MAX_TOKENS = 2048
-    AGENT_TOP_P = 0.95
-    AGENT_FREQUENCY_PENALTY = 0
-    AGENT_PRESENCE_PENALTY = 0
-    AGENT_TIMEOUT = 180
+    AGENT_TEMPERATURE: float = 0.3
+    AGENT_MAX_TOKENS: int = 2048
+    AGENT_TOP_P: float = 0.95
+    AGENT_FREQUENCY_PENALTY: float = 0
+    AGENT_PRESENCE_PENALTY: float = 0
+    AGENT_TIMEOUT: int = 300
+    
+    @classmethod
+    def validate(cls) -> Dict[str, Any]:
+        """验证配置是否完整"""
+        errors = []
+        warnings = []
+        
+        if not cls.OPENAI_API_KEY:
+            errors.append('OPENAI_API_KEY 未设置，请在.env文件中配置')
+        
+        if cls.FLASK_SECRET_KEY == 'dev-secret-key' and not cls.FLASK_DEBUG:
+            warnings.append('FLASK_SECRET_KEY 使用默认值，建议在生产环境中设置强密钥')
+        
+        return {
+            'valid': len(errors) == 0,
+            'errors': errors,
+            'warnings': warnings
+        }
     
     AGENT_CONFIGS = {
         'technical_analyst': {

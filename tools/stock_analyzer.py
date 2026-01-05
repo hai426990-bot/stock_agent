@@ -301,7 +301,7 @@ class StockAnalyzer:
                         financial_leverage = 1 / (1 - debt_ratio_float)
                     else:
                         financial_leverage = 1.0
-                except:
+                except (ValueError, TypeError, ZeroDivisionError):
                     financial_leverage = 1.0
             else:
                 financial_leverage = 1.0

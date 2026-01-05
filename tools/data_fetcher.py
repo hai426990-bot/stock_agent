@@ -60,6 +60,7 @@ session.mount("https://", adapter)
 
 # 设置全局超时时间
 GLOBAL_TIMEOUT = 30  # 30秒超时
+SECTOR_DATA_TIMEOUT = 30  # 板块数据超时时间（从15秒增加到30秒）
 SPOT_CACHE_TTL = 10
 STOCK_LIST_TTL = 86400
 
@@ -93,8 +94,11 @@ def _to_float(value: Any) -> Optional[float]:
 class DataFetcher:
     def __init__(self, enable_cache: bool = True):
         self.cache = DataCache() if enable_cache else None
+        self.industry_sectors = set()
+        self.concept_sectors = set()
         try:
             self._get_stock_list_data()
+            self.get_sector_list() # 初始化板块列表
         except Exception:
             pass
     
@@ -163,8 +167,8 @@ class DataFetcher:
                 if self.cache:
                     try:
                         self.cache.set("stock_list", {}, df.to_dict("records"), ttl=STOCK_LIST_TTL)
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.warning(f"缓存股票列表失败: {e}")
             finally:
                 with _stock_list_cache_lock:
                     _stock_list_fetching = False
@@ -1032,7 +1036,7 @@ class DataFetcher:
             try:
                 profit_growth = float(profit_growth) if profit_growth else 0
                 peg = pe_ratio / profit_growth if profit_growth != 0 else 0
-            except:
+            except (ValueError, TypeError, ZeroDivisionError):
                 peg = 0
             
             # 计算股息率（模拟数据）
@@ -1065,86 +1069,136 @@ class DataFetcher:
         return result
     
     def get_comprehensive_data(self, stock_code: str) -> Dict[str, Any]:
-        stock_info = self.get_stock_info(stock_code)
-        kline_data = self.get_kline_data(stock_code)
-        financial_data = self.get_financial_data(stock_code)
-        fund_flow = self.get_fund_flow(stock_code)
-        market_sentiment = self.get_market_sentiment()
-        public_opinion = self.get_public_opinion(stock_code)
-        industry_comparison = self.get_industry_comparison(stock_code)
-        valuation_data = self.get_valuation_data(stock_code)
+        """并行获取所有股票数据"""
+        logger.info(f"[数据获取] 开始并行获取股票综合数据: {stock_code}")
         
+        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+            future_to_name = {
+                executor.submit(self.get_stock_info, stock_code): 'stock_info',
+                executor.submit(self.get_kline_data, stock_code): 'kline_data',
+                executor.submit(self.get_financial_data, stock_code): 'financial_data',
+                executor.submit(self.get_fund_flow, stock_code): 'fund_flow',
+                executor.submit(self.get_market_sentiment): 'market_sentiment',
+                executor.submit(self.get_public_opinion, stock_code): 'public_opinion',
+                executor.submit(self.get_industry_comparison, stock_code): 'industry_comparison',
+                executor.submit(self.get_valuation_data, stock_code): 'valuation_data'
+            }
+            
+            results = {}
+            for future in concurrent.futures.as_completed(future_to_name):
+                name = future_to_name[future]
+                try:
+                    results[name] = future.result()
+                except Exception as e:
+                    logger.error(f"[数据获取] 并行获取 {name} 失败: {e}")
+                    results[name] = None if name != 'kline_data' else pd.DataFrame()
+        
+        # 处理 K 线数据
+        kline_data = results.get('kline_data')
         kline_records = []
         try:
-            if not kline_data.empty:
+            if kline_data is not None and not kline_data.empty:
                 kline_records = kline_data.to_dict('records')
         except Exception as e:
+            logger.error(f"[数据获取] K线数据转换失败: {e}")
             kline_records = []
-        
+            
         return {
-            'stock_info': stock_info,
+            'stock_info': results.get('stock_info') or {},
             'kline_data': kline_records,
-            'financial_data': financial_data,
-            'fund_flow': fund_flow,
-            'market_sentiment': market_sentiment,
-            'public_opinion': public_opinion,
-            'industry_comparison': industry_comparison,
-            'valuation_data': valuation_data
+            'financial_data': results.get('financial_data') or {},
+            'fund_flow': results.get('fund_flow') or {},
+            'market_sentiment': results.get('market_sentiment') or {},
+            'public_opinion': results.get('public_opinion') or {},
+            'industry_comparison': results.get('industry_comparison') or {},
+            'valuation_data': results.get('valuation_data') or {}
         }
     
     @performance_monitor
     def get_sector_list(self) -> Dict[str, Any]:
-        """获取板块列表"""
+        """获取板块列表（整合行业和概念板块）"""
         if self.cache:
             cached_data = self.cache.get('sector_list', {})
             if cached_data:
                 logger.info(f"[数据缓存] 获取板块列表缓存命中")
+                # 恢复行业和概念板块集合
+                self.industry_sectors = set(cached_data.get('industry_sectors', []))
+                self.concept_sectors = set(cached_data.get('concept_sectors', []))
                 return cached_data
         
         logger.info(f"[数据获取] 开始获取板块列表")
         max_retries = 3
         retry_delay = 0.5
         
-        for attempt in range(max_retries):
-            try:
-                start_time = time.time()
-                # 使用akshare获取板块列表
-                sector_df = ak.stock_board_industry_name_em()
-                end_time = time.time()
-                
-                if end_time - start_time > GLOBAL_TIMEOUT:
-                    raise Exception("获取板块列表超时")
-                
-                if sector_df is None or not isinstance(sector_df, pd.DataFrame) or sector_df.empty:
-                    logger.info(f"[数据获取] 板块列表数据为空")
-                    result = {}
-                else:
-                    sectors = []
-                    for _, row in sector_df.iterrows():
-                        sector_item = {
-                            'sector_name': row.get('板块名称', ''),
-                            'sector_code': row.get('板块代码', '')
-                        }
-                        sectors.append(sector_item)
-                    
-                    result = {
-                        'sectors': sectors,
-                        'count': len(sectors)
-                    }
-                    logger.debug(f"[数据获取] 解析板块列表成功")
+        all_sectors = []
+        industry_names = []
+        concept_names = []
+        
+        def fetch_industry():
+            for attempt in range(max_retries):
+                try:
+                    df = ak.stock_board_industry_name_em()
+                    if df is not None and not df.empty:
+                        results = []
+                        names = []
+                        for _, row in df.iterrows():
+                            name = row.get('板块名称', '')
+                            results.append({
+                                'sector_name': name,
+                                'sector_code': row.get('板块代码', ''),
+                                'type': 'industry'
+                            })
+                            names.append(name)
+                        return results, names
+                except Exception as e:
+                    logger.warning(f"获取行业板块失败 (尝试 {attempt+1}): {e}")
+                    time.sleep(retry_delay)
+            return [], []
+
+        def fetch_concept():
+            for attempt in range(max_retries):
+                try:
+                    df = ak.stock_board_concept_name_em()
+                    if df is not None and not df.empty:
+                        results = []
+                        names = []
+                        for _, row in df.iterrows():
+                            name = row.get('板块名称', '')
+                            results.append({
+                                'sector_name': name,
+                                'sector_code': row.get('板块代码', ''),
+                                'type': 'concept'
+                            })
+                            names.append(name)
+                        return results, names
+                except Exception as e:
+                    logger.warning(f"获取概念板块失败 (尝试 {attempt+1}): {e}")
+                    time.sleep(retry_delay)
+            return [], []
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+            future_industry = executor.submit(fetch_industry)
+            future_concept = executor.submit(fetch_concept)
             
-            except Exception as e:
-                if attempt == max_retries - 1:
-                    logger.error(f"[数据获取] 获取板块列表失败 (尝试{max_retries}次): 错误: {str(e)}")
-                    return {}
-                logger.warning(f"[数据获取] 获取板块列表失败，重试中 (尝试{attempt+1}/{max_retries}): 错误: {str(e)}")
-                time.sleep(retry_delay * (2 ** attempt))
-                retry_delay *= 1.5
-                continue
+            industry_results, industry_names = future_industry.result()
+            concept_results, concept_names = future_concept.result()
+            
+            all_sectors.extend(industry_results)
+            all_sectors.extend(concept_results)
+        
+        self.industry_sectors = set(industry_names)
+        self.concept_sectors = set(concept_names)
+        
+        result = {
+            'sectors': all_sectors,
+            'count': len(all_sectors),
+            'industry_sectors': list(self.industry_sectors),
+            'concept_sectors': list(self.concept_sectors)
+        }
         
         if self.cache:
-            self.cache.set('sector_list', {}, result, ttl=86400)  # 板块列表缓存1天
-        
+            self.cache.set('sector_list', {}, result, ttl=86400)
+            
         return result
     
     def validate_sector(self, sector_name: str) -> Dict[str, Any]:
@@ -1162,7 +1216,7 @@ class DataFetcher:
         }
     
     def get_sectors_by_category(self) -> Dict[str, Any]:
-        """获取分类的板块列表"""
+        """获取分类的板块列表（整合行业和概念板块）"""
         if self.cache:
             cached_data = self.cache.get('sectors_by_category', {})
             if cached_data:
@@ -1170,96 +1224,86 @@ class DataFetcher:
                 return cached_data
         
         logger.info(f"[数据获取] 开始获取分类板块列表")
-        max_retries = 3
-        retry_delay = 0.5
         
-        for attempt in range(max_retries):
-            try:
-                start_time = time.time()
-                # 使用akshare获取板块列表
-                sector_df = ak.stock_board_industry_name_em()
-                end_time = time.time()
-                
-                if end_time - start_time > GLOBAL_TIMEOUT:
-                    raise Exception("获取板块列表超时")
-                
-                if sector_df is None or not isinstance(sector_df, pd.DataFrame) or sector_df.empty:
-                    logger.info(f"[数据获取] 板块列表数据为空")
-                    result = {}
-                else:
-                    # 定义板块分类规则
-                    category_rules = {
-                        '半导体': ['半导体', '芯片', '集成电路', 'IC'],
-                        '新能源': ['新能源', '光伏', '风电', '储能', '锂电池', '氢能源'],
-                        '医药': ['医药', '医疗', '生物', '疫苗', '创新药'],
-                        '消费': ['消费', '食品', '饮料', '白酒', '家电', '零售'],
-                        '金融': ['银行', '证券', '保险', '金融', '券商', '基金'],
-                        '科技': ['科技', '软件', '互联网', '通信', '5G', 'AI', '人工智能'],
-                        '制造业': ['制造', '工业', '机械', '设备'],
-                        '材料': ['材料', '化工', '钢铁', '有色', '建材'],
-                        '地产': ['地产', '房地产', '建筑', '物业'],
-                        '交通运输': ['交通', '运输', '物流', '航空', '港口']
-                    }
-                    
-                    # 未分类板块
-                    uncategorized = []
-                    
-                    # 按分类组织板块
-                    categories = {category: [] for category in category_rules.keys()}
-                    
-                    for _, row in sector_df.iterrows():
-                        sector_name = row.get('板块名称', '')
-                        sector_code = row.get('板块代码', '')
-                        sector_item = {
-                            'sector_name': sector_name,
-                            'sector_code': sector_code
-                        }
-                        
-                        # 匹配分类
-                        matched = False
-                        for category, keywords in category_rules.items():
-                            for keyword in keywords:
-                                if keyword in sector_name:
-                                    categories[category].append(sector_item)
-                                    matched = True
-                                    break
-                            if matched:
-                                break
-                        
-                        if not matched:
-                            uncategorized.append(sector_item)
-                    
-                    # 添加未分类板块
-                    if uncategorized:
-                        categories['其他'] = uncategorized
-                    
-                    # 计算每个分类的板块数量
-                    category_counts = {category: len(sectors) for category, sectors in categories.items()}
-                    
-                    result = {
-                        'categories': categories,
-                        'category_counts': category_counts,
-                        'total_count': len(sector_df)
-                    }
-                    logger.debug(f"[数据获取] 解析分类板块列表成功")
+        try:
+            # 获取所有板块
+            sector_list_data = self.get_sector_list()
+            sectors = sector_list_data.get('sectors', [])
             
-            except Exception as e:
-                if attempt == max_retries - 1:
-                    logger.error(f"[数据获取] 获取分类板块列表失败 (尝试{max_retries}次): 错误: {str(e)}")
-                    return {}
-                logger.warning(f"[数据获取] 获取分类板块列表失败，重试中 (尝试{attempt+1}/{max_retries}): 错误: {str(e)}")
-                time.sleep(retry_delay * (2 ** attempt))
-                retry_delay *= 1.5
-                continue
-        
-        if self.cache:
-            self.cache.set('sectors_by_category', {}, result, ttl=86400)  # 分类板块列表缓存1天
-        
-        return result
+            if not sectors:
+                logger.info(f"[数据获取] 板块列表数据为空")
+                return {}
+
+            # 定义板块分类规则
+            category_rules = {
+                '半导体': ['半导体', '芯片', '集成电路', 'IC'],
+                '新能源': ['新能源', '光伏', '风电', '储能', '锂电池', '氢能源', '电池'],
+                '医药': ['医药', '医疗', '生物', '疫苗', '创新药', '眼科', '牙科'],
+                '消费': ['消费', '食品', '饮料', '白酒', '家电', '零售', '酿酒', '啤酒', '调味品', '免税'],
+                '金融': ['银行', '证券', '保险', '金融', '券商', '基金', '信托'],
+                '科技': ['科技', '软件', '互联网', '通信', '5G', 'AI', '人工智能', '云计算', '大数据', '游戏', '传媒'],
+                '制造业': ['制造', '工业', '机械', '设备', '军工', '航天', '航空'],
+                '材料': ['材料', '化工', '钢铁', '有色', '建材', '稀土', '锂矿', '磷化工'],
+                '地产': ['地产', '房地产', '建筑', '物业', '水泥'],
+                '交通运输': ['交通', '运输', '物流', '航空', '港口', '航运', '快递'],
+                '资源': ['煤炭', '石油', '天然气', '电力', '水务', '燃气']
+            }
+            
+            # 未分类板块
+            uncategorized = []
+            
+            # 按分类组织板块
+            categories = {category: [] for category in category_rules.keys()}
+            
+            for sector in sectors:
+                sector_name = sector.get('sector_name', '')
+                sector_code = sector.get('sector_code', '')
+                sector_item = {
+                    'sector_name': sector_name,
+                    'sector_code': sector_code,
+                    'type': sector.get('type', 'industry')
+                }
+                
+                # 匹配分类
+                matched = False
+                for category, keywords in category_rules.items():
+                    for keyword in keywords:
+                        if keyword in sector_name:
+                            categories[category].append(sector_item)
+                            matched = True
+                            break
+                    if matched:
+                        break
+                
+                if not matched:
+                    uncategorized.append(sector_item)
+            
+            # 添加未分类板块
+            if uncategorized:
+                categories['其他'] = uncategorized
+            
+            # 计算每个分类的板块数量
+            category_counts = {category: len(sectors_list) for category, sectors_list in categories.items()}
+            
+            result = {
+                'categories': categories,
+                'category_counts': category_counts,
+                'total_count': len(sectors)
+            }
+            logger.debug(f"[数据获取] 解析分类板块列表成功")
+            
+            if self.cache:
+                self.cache.set('sectors_by_category', {}, result, ttl=86400)  # 分类板块列表缓存1天
+            
+            return result
+
+        except Exception as e:
+            logger.error(f"[数据获取] 获取分类板块列表失败: {str(e)}")
+            return {}
     
     @performance_monitor
     def get_sector_components(self, sector_name: str) -> Dict[str, Any]:
-        """获取板块成分股"""
+        """获取板块成分股（支持行业和概念板块）"""
         if self.cache:
             cached_data = self.cache.get('sector_components', {'sector_name': sector_name})
             # 只有当缓存的数据有效（成分股数量>0）时，才返回缓存数据
@@ -1268,22 +1312,35 @@ class DataFetcher:
                 return cached_data
         
         logger.info(f"[数据获取] 开始获取板块成分股: {sector_name}")
-        max_retries = 3
+        
+        # 确定是行业还是概念板块
+        is_concept = sector_name in self.concept_sectors
+        is_industry = sector_name in self.industry_sectors
+        
+        max_retries = 2
         retry_delay = 0.5
         
         for attempt in range(max_retries):
             try:
-                start_time = time.time()
-                # 使用akshare获取板块成分股 - 添加超时控制
-                components_df = run_with_timeout(
-                    lambda: ak.stock_board_industry_cons_em(symbol=sector_name),
-                    timeout=15.0,
-                    default=None
-                )
-                end_time = time.time()
+                components_df = None
                 
-                if end_time - start_time > GLOBAL_TIMEOUT:
-                    raise Exception("获取板块成分股超时")
+                # 如果明确知道是概念板块，或者两者都不确定
+                if is_concept or (not is_concept and not is_industry):
+                    logger.info(f"[数据获取] 尝试作为概念板块获取: {sector_name}")
+                    components_df = run_with_timeout(
+                        lambda: ak.stock_board_concept_cons_em(symbol=sector_name),
+                        timeout=SECTOR_DATA_TIMEOUT,
+                        default=None
+                    )
+                
+                # 如果作为概念板块获取失败且可能属于行业板块，或者明确知道是行业板块
+                if (components_df is None or components_df.empty) and (is_industry or (not is_concept and not is_industry)):
+                    logger.info(f"[数据获取] 尝试作为行业板块获取: {sector_name}")
+                    components_df = run_with_timeout(
+                        lambda: ak.stock_board_industry_cons_em(symbol=sector_name),
+                        timeout=SECTOR_DATA_TIMEOUT,
+                        default=None
+                    )
                 
                 if components_df is None or not isinstance(components_df, pd.DataFrame) or components_df.empty:
                     logger.info(f"[数据获取] 板块成分股数据为空: {sector_name}")
@@ -1328,7 +1385,6 @@ class DataFetcher:
                 retry_delay *= 1.5
                 continue
         
-        # 兜底返回（理论上不会执行到这里）
         return {
             'sector_name': sector_name,
             'components': [],
@@ -1413,11 +1469,29 @@ class DataFetcher:
                 
                 # 获取板块实时行情（传入板块名称作为参数）- 添加超时控制
                 logger.info(f"[数据获取] 开始获取板块实时行情: {sector_name}")
-                sector_spot_df = run_with_timeout(
-                    lambda: ak.stock_board_industry_spot_em(symbol=sector_name),
-                    timeout=15.0,
-                    default=None
-                )
+                is_concept = sector_name in self.concept_sectors
+                is_industry = sector_name in self.industry_sectors
+                
+                sector_spot_df = None
+                
+                # 尝试作为概念板块获取
+                if is_concept or (not is_concept and not is_industry):
+                    logger.info(f"[数据获取] 尝试作为概念板块实时行情获取: {sector_name}")
+                    sector_spot_df = run_with_timeout(
+                        lambda: ak.stock_board_concept_spot_em(symbol=sector_name),
+                        timeout=SECTOR_DATA_TIMEOUT,
+                        default=None
+                    )
+                
+                # 如果失败，尝试作为行业板块获取
+                if (sector_spot_df is None or sector_spot_df.empty) and (is_industry or (not is_concept and not is_industry)):
+                    logger.info(f"[数据获取] 尝试作为行业板块实时行情获取: {sector_name}")
+                    sector_spot_df = run_with_timeout(
+                        lambda: ak.stock_board_industry_spot_em(symbol=sector_name),
+                        timeout=SECTOR_DATA_TIMEOUT,
+                        default=None
+                    )
+                    
                 logger.info(f"[数据获取] 板块实时行情获取完成: {sector_name}, 结果: {sector_spot_df is not None and not sector_spot_df.empty}")
                 if sector_spot_df is not None and not sector_spot_df.empty:
                     # 转换为字典格式以便于访问
@@ -1433,11 +1507,18 @@ class DataFetcher:
                 # 获取板块列表数据，用于获取总市值等信息 - 添加超时控制
                 try:
                     logger.info(f"[数据获取] 开始获取板块列表数据")
-                    sector_list_df = run_with_timeout(
-                        lambda: ak.stock_board_industry_name_em(),
-                        timeout=15.0,
-                        default=None
-                    )
+                    if is_concept:
+                        sector_list_df = run_with_timeout(
+                            lambda: ak.stock_board_concept_name_em(),
+                            timeout=SECTOR_DATA_TIMEOUT,
+                            default=None
+                        )
+                    else:
+                        sector_list_df = run_with_timeout(
+                            lambda: ak.stock_board_industry_name_em(),
+                            timeout=SECTOR_DATA_TIMEOUT,
+                            default=None
+                        )
                     logger.info(f"[数据获取] 板块列表数据获取完成, 结果: {sector_list_df is not None and not sector_list_df.empty}")
                     if sector_list_df is not None and not sector_list_df.empty:
                         # 查找当前板块
@@ -1451,11 +1532,18 @@ class DataFetcher:
                 # 获取板块历史行情数据，用于计算5日和30日涨跌幅、技术指标 - 添加超时控制
                 try:
                     logger.info(f"[数据获取] 开始获取板块历史行情数据: {sector_name}")
-                    sector_hist_df = run_with_timeout(
-                        lambda: ak.stock_board_industry_hist_em(symbol=sector_name),
-                        timeout=15.0,
-                        default=None
-                    )
+                    if is_concept:
+                        sector_hist_df = run_with_timeout(
+                            lambda: ak.stock_board_concept_hist_em(symbol=sector_name),
+                            timeout=SECTOR_DATA_TIMEOUT,
+                            default=None
+                        )
+                    else:
+                        sector_hist_df = run_with_timeout(
+                            lambda: ak.stock_board_industry_hist_em(symbol=sector_name),
+                            timeout=SECTOR_DATA_TIMEOUT,
+                            default=None
+                        )
                     logger.info(f"[数据获取] 板块历史行情数据获取完成: {sector_name}, 结果: {sector_hist_df is not None and not sector_hist_df.empty}")
                     if sector_hist_df is not None and not sector_hist_df.empty:
                         # 计算5日和30日涨跌幅
@@ -1503,8 +1591,8 @@ class DataFetcher:
                                     # 假设历史PE在10-50之间波动（简化处理）
                                     pe_percentile = min(100, max(0, ((current_pe - 10) / 40) * 100))
                                     valuation['pe_history_percentile'] = f"{pe_percentile:.1f}%"
-                            except Exception:
-                                pass
+                            except (ValueError, TypeError, ZeroDivisionError) as e:
+                                logger.debug(f"计算PE历史分位失败: {e}")
                 except Exception as e:
                     logger.warning(f"[数据获取] 获取板块历史行情失败: {str(e)}")
                 
@@ -1593,69 +1681,97 @@ class DataFetcher:
                         logger.info(f"[数据获取] 开始获取板块成分股实时行情: {sector_name}")
                         logger.info(f"[数据获取] 成分股数量: {len(components)}")
                         
-                        component_quotes_df = run_with_timeout(
-                            lambda: ak.stock_board_industry_cons_em(symbol=sector_name),
-                            timeout=15.0,
-                            default=None
-                        )
+                        # 根据板块类型选择正确的API
+                        if is_concept:
+                            component_quotes_df = run_with_timeout(
+                                lambda: ak.stock_board_concept_cons_em(symbol=sector_name),
+                                timeout=20.0,
+                                default=None
+                            )
+                        else:
+                            component_quotes_df = run_with_timeout(
+                                lambda: ak.stock_board_industry_cons_em(symbol=sector_name),
+                                timeout=20.0,
+                                default=None
+                            )
                         
                         logger.info(f"[数据获取] 板块成分股实时行情获取完成: {sector_name}")
-                        logger.info(f"[数据获取] component_quotes_df is None: {component_quotes_df is None}")
-                        if component_quotes_df is not None:
-                            logger.info(f"[数据获取] component_quotes_df.empty: {component_quotes_df.empty}")
-                            logger.info(f"[数据获取] component_quotes_df shape: {component_quotes_df.shape if hasattr(component_quotes_df, 'shape') else 'N/A'}")
-                        
                         if component_quotes_df is not None and not component_quotes_df.empty:
-                            logger.info(f"[数据获取] 开始计算板块成分股指标")
-                            # 计算平均涨跌幅
-                            avg_change = component_quotes_df['涨跌幅'].mean()
-                            component_performance['avg_change'] = f"{avg_change:.2f}%" if not pd.isna(avg_change) else ''
-                            logger.info(f"[数据获取] 平均涨跌幅: {component_performance['avg_change']}")
+                            logger.info(f"[数据获取] 开始计算板块成分股指标, 数据量: {len(component_quotes_df)}")
                             
-                            # 计算涨跌比
-                            up_count = len(component_quotes_df[component_quotes_df['涨跌幅'] > 0])
-                            down_count = len(component_quotes_df[component_quotes_df['涨跌幅'] < 0])
-                            component_performance['up_down_ratio'] = f"{up_count}:{down_count}"
-                            logger.info(f"[数据获取] 涨跌比: {component_performance['up_down_ratio']}")
+                            # 确保必要的列存在
+                            required_cols = ['涨跌幅', '名称', '市盈率-动态', '市净率']
+                            for col in required_cols:
+                                if col not in component_quotes_df.columns:
+                                    # 尝试映射可能的列名
+                                    col_map = {'涨跌幅': ['涨跌幅', 'change_percent', 'pct_chg'], 
+                                              '名称': ['名称', 'name'],
+                                              '市盈率-动态': ['市盈率-动态', 'pe', 'pe_ttm'],
+                                              '市净率': ['市净率', 'pb']}
+                                    for alt_col in col_map.get(col, []):
+                                        if alt_col in component_quotes_df.columns:
+                                            component_quotes_df[col] = component_quotes_df[alt_col]
+                                            break
                             
-                            # 获取领涨领跌个股（各取前3名）
-                            sorted_by_change = component_quotes_df.sort_values('涨跌幅', ascending=False)
-                            top_gainers = sorted_by_change.head(3)
-                            top_losers = sorted_by_change.tail(3)
-                            
-                            # 构建领涨个股列表
-                            component_performance['top_gainers'] = [
-                                (row['名称'], f"{row['涨跌幅']:.2f}%") 
-                                for _, row in top_gainers.iterrows()
-                            ]
-                            logger.info(f"[数据获取] 领涨个股: {component_performance['top_gainers']}")
-                            
-                            # 构建领跌个股列表
-                            component_performance['top_losers'] = [
-                                (row['名称'], f"{row['涨跌幅']:.2f}%") 
-                                for _, row in top_losers.iterrows()
-                            ]
-                            logger.info(f"[数据获取] 领跌个股: {component_performance['top_losers']}")
+                            # 再次检查 '涨跌幅' 列是否存在
+                            if '涨跌幅' in component_quotes_df.columns:
+                                # 计算平均涨跌幅
+                                try:
+                                    # 确保涨跌幅是数值类型
+                                    component_quotes_df['涨跌幅'] = pd.to_numeric(component_quotes_df['涨跌幅'], errors='coerce')
+                                    avg_change = component_quotes_df['涨跌幅'].mean()
+                                    component_performance['avg_change'] = f"{avg_change:.2f}%" if not pd.isna(avg_change) else ''
+                                    
+                                    # 计算涨跌比
+                                    up_count = len(component_quotes_df[component_quotes_df['涨跌幅'] > 0])
+                                    down_count = len(component_quotes_df[component_quotes_df['涨跌幅'] < 0])
+                                    component_performance['up_down_ratio'] = f"{up_count}:{down_count}"
+                                    
+                                    # 获取领涨领跌个股（各取前3名）
+                                    sorted_by_change = component_quotes_df.sort_values('涨跌幅', ascending=False)
+                                    top_gainers = sorted_by_change.head(min(3, len(sorted_by_change)))
+                                    top_losers = sorted_by_change.tail(min(3, len(sorted_by_change)))
+                                    
+                                    # 构建领涨个股列表
+                                    component_performance['top_gainers'] = [
+                                        (str(row.get('名称', '未知')), f"{row.get('涨跌幅', 0):.2f}%") 
+                                        for _, row in top_gainers.iterrows()
+                                    ]
+                                    
+                                    # 构建领跌个股列表
+                                    component_performance['top_losers'] = [
+                                        (str(row.get('名称', '未知')), f"{row.get('涨跌幅', 0):.2f}%") 
+                                        for _, row in top_losers.iterrows()
+                                    ]
+                                except (ValueError, TypeError, KeyError, AttributeError) as e:
+                                    logger.warning(f"[数据获取] 计算成分股指标失败: {e}")
                             
                             # 计算板块平均PE和PB
-                            avg_pe = component_quotes_df['市盈率-动态'].mean()
-                            avg_pb = component_quotes_df['市净率'].mean()
-                            valuation['avg_pe'] = f"{avg_pe:.2f}" if not pd.isna(avg_pe) else ''
-                            valuation['avg_pb'] = f"{avg_pb:.2f}" if not pd.isna(avg_pb) else ''
-                            logger.info(f"[数据获取] 平均PE: {valuation['avg_pe']}, 平均PB: {valuation['avg_pb']}")
+                            try:
+                                if '市盈率-动态' in component_quotes_df.columns:
+                                    component_quotes_df['市盈率-动态'] = pd.to_numeric(component_quotes_df['市盈率-动态'], errors='coerce')
+                                    avg_pe = component_quotes_df['市盈率-动态'].mean()
+                                    valuation['avg_pe'] = f"{avg_pe:.2f}" if not pd.isna(avg_pe) else ''
+                                
+                                if '市净率' in component_quotes_df.columns:
+                                    component_quotes_df['市净率'] = pd.to_numeric(component_quotes_df['市净率'], errors='coerce')
+                                    avg_pb = component_quotes_df['市净率'].mean()
+                                    valuation['avg_pb'] = f"{avg_pb:.2f}" if not pd.isna(avg_pb) else ''
+                            except (ValueError, TypeError, KeyError) as e:
+                                logger.warning(f"[数据获取] 计算估值指标失败: {e}")
                         else:
                             logger.warning(f"[数据获取] 板块成分股数据为空或获取失败")
                     except Exception as e:
                         logger.warning(f"[数据获取] 获取板块成分股行情失败: {str(e)}")
                         import traceback
-                        logger.warning(f"[数据获取] 堆栈跟踪: {traceback.format_exc()}")
+                        logger.debug(f"[数据获取] 堆栈跟踪: {traceback.format_exc()}")
                 
                 # 获取板块资金流向数据（使用try-except隔离，避免超时影响整体）- 添加超时控制
                 try:
                     logger.info(f"[数据获取] 开始获取板块资金流向数据: {sector_name}")
                     fund_flow_data = run_with_timeout(
                         lambda: ak.stock_fund_flow_industry(),
-                        timeout=15.0,
+                        timeout=SECTOR_DATA_TIMEOUT,
                         default=None
                     )
                     logger.info(f"[数据获取] 板块资金流向数据获取完成: {sector_name}, 结果: {fund_flow_data is not None}")
