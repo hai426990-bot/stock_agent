@@ -57,15 +57,21 @@ K线形态（头肩顶底、双顶双底、三角形等）、技术指标（MACD
         stock_code = stock_data.get('stock_code', '')
         stock_name = stock_data.get('stock_name', '')
         current_price = stock_data.get('current_price', '')
-        high = stock_data.get('high', '')
-        low = stock_data.get('low', '')
-        volume = stock_data.get('volume', '')
-        turnover_rate = stock_data.get('turnover_rate', '')
-        volume_ratio = stock_data.get('volume_ratio', '')
+        market_cap = stock_data.get('market_cap', '')
         pe_ratio = stock_data.get('pe_ratio', '')
         pb_ratio = stock_data.get('pb_ratio', '')
+        turnover_rate = stock_data.get('turnover_rate', '')
+        volume_ratio = stock_data.get('volume_ratio', '')
         
+        # 从技术指标获取数据，确保有默认值
         technical_indicators = stock_data.get('technical_indicators', {})
+        
+        # 从kline_data获取最新的价格数据
+        kline_data = stock_data.get('kline_data', [])
+        latest_kline = kline_data[-1] if kline_data else {}
+        high = latest_kline.get('最高', '')
+        low = latest_kline.get('最低', '')
+        volume = latest_kline.get('成交量', '')
         
         input_text = f"""请对以下股票进行技术面分析：
 
@@ -78,6 +84,9 @@ K线形态（头肩顶底、双顶双底、三角形等）、技术指标（MACD
 成交量：{volume}
 换手率：{turnover_rate}
 量比：{volume_ratio}
+总市值：{market_cap}
+市盈率：{pe_ratio}
+市净率：{pb_ratio}
 
 【技术指标数据】
 均线系统：{technical_indicators.get('ma', {})}
@@ -88,6 +97,8 @@ RSI指标：{technical_indicators.get('rsi', {})}
 量价分析：{technical_indicators.get('volume_ratio', {})}
 K线形态：{technical_indicators.get('patterns', {})}
 支撑阻力：{technical_indicators.get('support_resistance', {})}
+波动率：{technical_indicators.get('volatility', {})}
+风险指标：{technical_indicators.get('risk_metrics', {})}
 
 请根据以上数据，按照系统提示的格式输出完整的技术面分析报告。
 """

@@ -344,6 +344,44 @@ section {
     flex-wrap: wrap;
 }
 
+/* 选项卡样式 - Apple风格 */
+.tabs {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 1.5rem;
+    background-color: var(--bg-secondary);
+    padding: 0.25rem;
+    border-radius: var(--border-radius-lg);
+    box-shadow: var(--shadow-sm);
+}
+
+.tab-btn {
+    flex: 1;
+    padding: 0.75rem 1.5rem;
+    font-size: 1rem;
+    font-weight: 500;
+    border: none;
+    border-radius: var(--border-radius-md);
+    background-color: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    outline: none;
+    min-height: 40px;
+}
+
+.tab-btn:hover {
+    background-color: var(--bg-tertiary);
+    color: var(--text-primary);
+}
+
+.tab-btn.active {
+    background-color: var(--white);
+    color: var(--primary-color);
+    box-shadow: var(--shadow-sm);
+    transform: translateY(0);
+}
+
 /* 按钮样式 - Apple风格 */
 .btn {
     display: inline-flex;
@@ -1406,6 +1444,58 @@ section {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+}
+
+/* 板块选择容器样式 */
+.sector-select-container {
+    position: relative;
+    width: 100%;
+}
+
+/* 板块选择下拉框样式 */
+.sector-select {
+    width: 100%;
+    padding: 0.9rem 1.25rem;
+    font-size: 1rem;
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius-md);
+    background-color: var(--white);
+    transition: all var(--transition-normal);
+    outline: none;
+    box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.05);
+    appearance: none;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%238E8E93' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 1rem center;
+    background-size: 1rem;
+    cursor: pointer;
+}
+
+.sector-select:focus {
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 3px rgba(0, 122, 255, 0.15);
+    background-color: var(--white);
+}
+
+.sector-select:hover {
+    background-color: var(--light);
+}
+
+.sector-select:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.sector-select option {
+    padding: 0.5rem;
+    background-color: var(--white);
+    color: var(--text-primary);
+}
+
+.sector-select option:hover {
+    background-color: var(--light);
 }
 
 /* 平滑滚动 */

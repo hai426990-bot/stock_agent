@@ -2,9 +2,12 @@
 const appState = {
     isConnected: false,
     isAnalyzing: false,
+    isAnalyzingSector: false,
     currentStockCode: null,
+    currentSectorName: null,
     socket: null,
     analysisHistory: JSON.parse(localStorage.getItem('analysisHistory')) || [],
+    sectorAnalysisHistory: JSON.parse(localStorage.getItem('sectorAnalysisHistory')) || [],
     notificationQueue: []
 };
 
@@ -15,7 +18,16 @@ const agentConfigs = {
     fundamental_analyst: { name: '基本面分析师', icon: '💰', color: '#2ecc71' },
     risk_manager: { name: '风险控制专家', icon: '⚠️', color: '#e74c3c' },
     sentiment_analyst: { name: '市场情绪分析师', icon: '😊', color: '#9b59b6' },
-    investment_strategist: { name: '投资策略师', icon: '🎯', color: '#f39c12' }
+    investment_strategist: { name: '投资策略师', icon: '🎯', color: '#f39c12' },
+    sector_analyst: { name: '板块分析师', icon: '🏢', color: '#1abc9c' }
+};
+
+// 板块分析师配置（包含所有板块分析师）
+const sectorAgentConfigs = {
+    sector_analyst: { name: '板块分析师', icon: '🏢', color: '#1abc9c' },
+    sector_technical_analyst: { name: '板块技术分析师', icon: '📊', color: '#3498db' },
+    sector_fundamental_analyst: { name: '板块基本面分析师', icon: '💹', color: '#2ecc71' },
+    sector_risk_analyst: { name: '板块风险分析师', icon: '🛡️', color: '#e74c3c' }
 };
 
 // DOM元素引用
@@ -23,9 +35,14 @@ const elements = {
     statusIndicator: document.getElementById('statusIndicator'),
     statusText: document.getElementById('statusText'),
     stockCode: document.getElementById('stockCode'),
+    sectorName: document.getElementById('sectorName'),
+    sectorCategory: document.getElementById('sectorCategory'),
     autocompleteDropdown: document.getElementById('autocompleteDropdown'),
+    sectorAutocompleteDropdown: document.getElementById('sectorAutocompleteDropdown'),
     analyzeBtn: document.getElementById('analyzeBtn'),
+    analyzeSectorBtn: document.getElementById('analyzeSectorBtn'),
     clearBtn: document.getElementById('clearBtn'),
+    clearSectorBtn: document.getElementById('clearSectorBtn'),
     overallProgressFill: document.getElementById('overallProgressFill'),
     overallProgressPercentage: document.getElementById('overallProgressPercentage'),
     overallProgressStatus: document.getElementById('overallProgressStatus'),
@@ -35,13 +52,16 @@ const elements = {
     summarySection: document.getElementById('summarySection'),
     notificationContainer: document.getElementById('notificationContainer'),
     agentsGrid: document.getElementById('agentsGrid'),
-    historyList: document.getElementById('historyList')
+    historyList: document.getElementById('historyList'),
+    stockSearchContainer: document.getElementById('stockSearchContainer'),
+    sectorSearchContainer: document.getElementById('sectorSearchContainer')
 };
 
 // 初始化应用
 function initApp() {
     initSocket();
     initEventListeners();
+    initSectorSelection();
     renderHistory();
 }
 
@@ -55,17 +75,19 @@ function initSocket() {
             reconnectionAttempts: Infinity,
             reconnectionDelay: 1000,
             reconnectionDelayMax: 5000,
-            timeout: 20000,
+            timeout: 60000,
             pingTimeout: 60000,
             pingInterval: 25000
         });
 
         appState.socket.on('connect', handleSocketConnect);
-        appState.socket.on('disconnect', handleSocketDisconnect);
-        appState.socket.on('connect_error', handleSocketError);
-        appState.socket.on('agent_update', handleAgentUpdate);
-        appState.socket.on('analysis_complete', handleAnalysisComplete);
-        appState.socket.on('analysis_error', handleAnalysisError);
+    appState.socket.on('disconnect', handleSocketDisconnect);
+    appState.socket.on('connect_error', handleSocketError);
+    appState.socket.on('agent_update', handleAgentUpdate);
+    appState.socket.on('analysis_complete', handleAnalysisComplete);
+    appState.socket.on('analysis_error', handleAnalysisError);
+    appState.socket.on('sector_analysis_complete', handleSectorAnalysisComplete);
+    appState.socket.on('sector_analysis_error', handleAnalysisError);
     } catch (error) {
         console.error('Socket初始化失败:', error);
         showNotification('error', '连接失败', '无法初始化实时连接');
@@ -107,19 +129,48 @@ function updateConnectionStatus() {
 
 // 初始化事件监听器
 function initEventListeners() {
+    // 选项卡切换事件
+    const tabBtns = document.querySelectorAll('.tab-btn');
+    tabBtns.forEach(btn => {
+        btn.addEventListener('click', handleTabChange);
+    });
+    
     // 股票代码输入事件
     elements.stockCode.addEventListener('input', debounce(handleStockInput, 300));
     elements.stockCode.addEventListener('keypress', handleStockKeyPress);
     
+    // 板块分类选择事件
+    const sectorCategory = document.getElementById('sectorCategory');
+    if (sectorCategory) {
+        sectorCategory.addEventListener('change', handleCategoryChange);
+    }
+    
+    // 板块名称按键事件
+    elements.sectorName.addEventListener('keypress', handleSectorKeyPress);
+    
     // 按钮事件
     elements.analyzeBtn.addEventListener('click', handleAnalyzeClick);
+    elements.analyzeSectorBtn.addEventListener('click', handleAnalyzeSectorClick);
     elements.clearBtn.addEventListener('click', handleClearClick);
+    elements.clearSectorBtn.addEventListener('click', handleClearSectorClick);
     
     // 自动补全点击事件（通过事件委托）
     elements.autocompleteDropdown.addEventListener('click', handleAutocompleteClick);
     
     // 点击页面其他区域关闭自动补全
     document.addEventListener('click', handleDocumentClick);
+}
+
+// 初始化板块选择
+function initSectorSelection() {
+    // 加载板块分类列表
+    loadSectorCategories();
+    
+    // 禁用板块名称选择框
+    const sectorSelect = document.getElementById('sectorName');
+    if (sectorSelect) {
+        sectorSelect.disabled = true;
+    }
 }
 
 // 防抖函数
@@ -244,11 +295,380 @@ function handleAutocompleteClick(e) {
     }
 }
 
+// 处理选项卡切换
+function handleTabChange(e) {
+    const targetTab = e.target.dataset.tab;
+    
+    // 更新选项卡状态
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.classList.remove('active');
+    });
+    e.target.classList.add('active');
+    
+    // 切换搜索容器
+    if (targetTab === 'stock') {
+        elements.stockSearchContainer.style.display = 'block';
+        elements.sectorSearchContainer.style.display = 'none';
+    } else if (targetTab === 'sector') {
+        elements.stockSearchContainer.style.display = 'none';
+        elements.sectorSearchContainer.style.display = 'block';
+        // 确保板块分类列表已加载
+        initSectorSelection();
+    }
+    
+    // 隐藏图表和结果区域
+    elements.chartSection.style.display = 'none';
+    elements.resultsSection.style.display = 'none';
+    elements.summarySection.style.display = 'none';
+}
+
+// 加载板块分类列表
+async function loadSectorCategories() {
+    try {
+        const response = await fetch('/api/sectors_by_category');
+        const data = await response.json();
+        if (data.success) {
+            const categories = data.data.categories;
+            const categorySelect = document.getElementById('sectorCategory');
+            
+            // 清空现有选项（保留第一个）
+            categorySelect.innerHTML = '<option value="">请选择板块分类</option>';
+            
+            // 添加分类选项
+            Object.keys(categories).forEach(category => {
+                if (categories[category].length > 0) {
+                    const option = document.createElement('option');
+                    option.value = category;
+                    option.textContent = category;
+                    categorySelect.appendChild(option);
+                }
+            });
+        }
+    } catch (error) {
+        console.error('加载板块分类失败:', error);
+        showNotification('error', '加载失败', '无法加载板块分类列表');
+    }
+}
+
+// 处理板块分类选择变化
+function handleCategoryChange() {
+    const category = document.getElementById('sectorCategory').value;
+    const sectorSelect = document.getElementById('sectorName');
+    
+    // 清空板块选项
+    sectorSelect.innerHTML = '<option value="">请选择板块名称</option>';
+    
+    if (!category) {
+        sectorSelect.disabled = true;
+        return;
+    }
+    
+    // 加载该分类下的板块列表
+    loadSectorsByCategory(category);
+}
+
+// 根据分类加载板块列表
+async function loadSectorsByCategory(category) {
+    try {
+        const response = await fetch('/api/sectors_by_category');
+        const data = await response.json();
+        if (data.success) {
+            const categories = data.data.categories;
+            const sectors = categories[category] || [];
+            const sectorSelect = document.getElementById('sectorName');
+            
+            // 启用板块选择
+            sectorSelect.disabled = false;
+            
+            // 添加板块选项
+            sectors.forEach(sector => {
+                const option = document.createElement('option');
+                option.value = sector.sector_name;
+                option.textContent = sector.sector_name;
+                sectorSelect.appendChild(option);
+            });
+        }
+    } catch (error) {
+        console.error('加载板块列表失败:', error);
+        showNotification('error', '加载失败', '无法加载板块列表');
+    }
+}
+
+// 处理板块名称按键
+function handleSectorKeyPress(e) {
+    if (e.key === 'Enter') {
+        e.preventDefault();
+        handleAnalyzeSectorClick();
+    }
+}
+
+// 处理板块分析按钮点击
+async function handleAnalyzeSectorClick() {
+    const sectorName = elements.sectorName.value.trim();
+    
+    if (!sectorName) {
+        showNotification('warning', '参数错误', '请输入板块名称');
+        elements.sectorName.focus();
+        return;
+    }
+    
+    if (!appState.isConnected) {
+        showNotification('error', '连接错误', '请先确保已连接到服务器');
+        return;
+    }
+    
+    if (appState.isAnalyzing || appState.isAnalyzingSector) {
+        showNotification('warning', '分析中', '当前正在分析中，请等待完成');
+        return;
+    }
+    
+    appState.isAnalyzingSector = true;
+    appState.currentSectorName = sectorName;
+    
+    // 更新UI状态
+    elements.analyzeSectorBtn.classList.add('loading');
+    elements.analyzeSectorBtn.innerHTML = '<span class="spinner"></span> <span class="btn-text">分析中...</span>';
+    elements.analyzeSectorBtn.disabled = true;
+    
+    // 隐藏股票相关的图表区域
+    elements.chartSection.style.display = 'none';
+    
+    // 显示进度区域
+    initializeSectorProgress();
+    
+    try {
+        // 发送板块分析请求
+        const response = await fetch('/api/analyze_sector', { // 注意：这里需要添加新的API端点
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                sector_name: sectorName,
+                session_id: appState.socket.id
+            })
+        });
+        
+        const data = await response.json();
+        
+        if (!response.ok) {
+            if (data.error && data.supported_sectors) {
+                // 板块不存在，显示支持的板块列表
+                let errorMessage = data.error;
+                if (data.supported_sectors && data.supported_sectors.length > 0) {
+                    errorMessage += '\n\n支持的板块：\n' + 
+                        data.supported_sectors.slice(0, 10).map(sector => `• ${sector.sector_name}`).join('\n') +
+                        (data.supported_sectors.length > 10 ? '\n... 更多板块请使用搜索功能' : '');
+                }
+                throw new Error(errorMessage);
+            } else {
+                throw new Error(data.error || `HTTP错误: ${response.status}`);
+            }
+        }
+        
+        if (data.success) {
+            showNotification('success', '分析请求已提交', `正在分析板块 ${sectorName}`);
+        } else {
+            throw new Error(data.error || '分析请求失败');
+        }
+        
+    } catch (error) {
+        console.error('板块分析请求失败:', error);
+        showNotification('error', '分析失败', error.message || '无法开始板块分析');
+        resetSectorAnalysisState();
+    }
+}
+
+// 处理清除板块历史按钮点击
+function handleClearSectorClick() {
+    if (confirm('确定要清除所有板块历史记录吗？')) {
+        appState.sectorAnalysisHistory = [];
+        localStorage.removeItem('sectorAnalysisHistory');
+        renderHistory();
+        showNotification('success', '清除成功', '板块历史记录已清除');
+    }
+}
+
 // 处理文档点击
 function handleDocumentClick(e) {
+    // 关闭股票自动补全
     if (!elements.autocompleteDropdown.contains(e.target) && e.target !== elements.stockCode) {
         hideAutocomplete();
     }
+    
+    // 关闭板块自动补全
+    if (!elements.sectorAutocompleteDropdown.contains(e.target) && e.target !== elements.sectorName) {
+        hideSectorAutocomplete();
+    }
+}
+
+// 搜索板块
+async function searchSectors(keyword) {
+    try {
+        const response = await fetch(`/api/search_sector?keyword=${encodeURIComponent(keyword)}`);
+        const data = await response.json();
+        return data.success ? data.results : [];
+    } catch (error) {
+        console.error('搜索板块失败:', error);
+        return [];
+    }
+}
+
+// 显示板块自动补全
+function showSectorAutocomplete(results) {
+    if (results.length === 0) {
+        hideSectorAutocomplete();
+        return;
+    }
+    
+    let html = '<div class="autocomplete-items">';
+    results.forEach(sector => {
+        html += `
+            <div class="autocomplete-item" data-sector="${sector.sector_name}">
+                <div class="autocomplete-item-header">
+                    <span class="stock-code">${sector.sector_name}</span>
+                </div>
+            </div>
+        `;
+    });
+    html += '</div>';
+    
+    elements.sectorAutocompleteDropdown.innerHTML = html;
+    elements.sectorAutocompleteDropdown.classList.add('show');
+}
+
+// 隐藏板块自动补全
+function hideSectorAutocomplete() {
+    elements.sectorAutocompleteDropdown.classList.remove('show');
+}
+
+// 处理板块自动补全点击
+function handleSectorAutocompleteClick(e) {
+    const item = e.target.closest('.autocomplete-item');
+    if (item) {
+        const sectorName = item.dataset.sector;
+        elements.sectorName.value = sectorName;
+        hideSectorAutocomplete();
+    }
+}
+
+// 重置板块分析状态
+function resetSectorAnalysisState() {
+    appState.isAnalyzingSector = false;
+    
+    // 恢复按钮状态
+    elements.analyzeSectorBtn.classList.remove('loading');
+    elements.analyzeSectorBtn.innerHTML = '<span class="btn-icon">🏢</span> <span class="btn-text">开始板块分析</span>';
+    elements.analyzeSectorBtn.disabled = false;
+}
+
+// 处理板块分析完成
+function handleSectorAnalysisComplete(data) {
+    console.log('板块分析完成:', data);
+    
+    appState.isAnalyzingSector = false;
+    
+    // 恢复按钮状态
+    elements.analyzeSectorBtn.classList.remove('loading');
+    elements.analyzeSectorBtn.innerHTML = '<span class="btn-icon">🏢</span> <span class="btn-text">开始板块分析</span>';
+    elements.analyzeSectorBtn.disabled = false;
+    
+    if (!data.result || !data.result.analyses) {
+        showNotification('error', '分析失败', '未收到完整的板块分析结果');
+        return;
+    }
+    
+    // 更新所有分析师卡片的最终状态
+    Object.entries(data.result.analyses).forEach(([agentType, analysis]) => {
+        const card = document.getElementById(`card-${agentType}`);
+        if (card) {
+            const statusBadge = card.querySelector('.agent-status-badge');
+            const contentDiv = document.getElementById(`content-${agentType}`);
+            const progressFill = document.getElementById(`progress-${agentType}`);
+            const progressText = document.getElementById(`progress-text-${agentType}`);
+            
+            if (statusBadge) {
+                statusBadge.className = 'agent-status-badge completed';
+                statusBadge.textContent = '已完成';
+            }
+            
+            if (progressFill) {
+                progressFill.style.width = '100%';
+            }
+            
+            if (progressText) {
+                progressText.textContent = '100%';
+            }
+            
+            if (contentDiv) {
+                if (analysis.error) {
+                    contentDiv.innerHTML = `<div class="content-wrapper" style="color: var(--danger-color);">❌ 分析失败: ${analysis.error}</div>`;
+                } else if (analysis.result && analysis.result.content) {
+                    // 处理**格式并转换为加粗标签
+                    let processedContent = analysis.result.content.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+                    // 替换换行符为<br>标签
+                    processedContent = processedContent.replace(/\n/g, '<br>');
+                    contentDiv.innerHTML = `<div class="content-wrapper">${processedContent}</div>`;
+                } else if (analysis.raw_response) {
+                    // 处理**格式并转换为加粗标签
+                    let processedContent = analysis.raw_response.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+                    // 替换换行符为<br>标签
+                    processedContent = processedContent.replace(/\n/g, '<br>');
+                    contentDiv.innerHTML = `<div class="content-wrapper">${processedContent}</div>`;
+                } else {
+                    contentDiv.innerHTML = `<div class="content-wrapper" style="color: var(--warning-color);">⚠️ 暂无分析结果</div>`;
+                }
+            }
+        }
+    });
+    
+    // 显示最终建议
+    showFinalRecommendation(data.result);
+    
+    // 添加到历史记录
+    addToSectorHistory(data.result);
+    
+    // 显示成功通知
+    showNotification('success', '板块分析完成', `板块 ${appState.currentSectorName} 分析已完成`);
+}
+
+// 添加到板块历史记录
+function addToSectorHistory(result) {
+    const historyItem = {
+        id: Date.now(),
+        sectorName: appState.currentSectorName,
+        timestamp: new Date().toISOString(),
+        result: result
+    };
+    
+    appState.sectorAnalysisHistory.unshift(historyItem);
+    
+    // 限制历史记录数量
+    if (appState.sectorAnalysisHistory.length > 10) {
+        appState.sectorAnalysisHistory.pop();
+    }
+    
+    // 保存到本地存储
+    localStorage.setItem('sectorAnalysisHistory', JSON.stringify(appState.sectorAnalysisHistory));
+    
+    // 更新历史记录显示
+    renderHistory();
+}
+
+// 重置分析状态（通用）
+function resetAnalysisState() {
+    appState.isAnalyzing = false;
+    appState.isAnalyzingSector = false;
+    
+    // 恢复股票分析按钮状态
+    elements.analyzeBtn.classList.remove('loading');
+    elements.analyzeBtn.innerHTML = '<span class="btn-icon">🚀</span> <span class="btn-text">开始分析</span>';
+    elements.analyzeBtn.disabled = false;
+    
+    // 恢复板块分析按钮状态
+    elements.analyzeSectorBtn.classList.remove('loading');
+    elements.analyzeSectorBtn.innerHTML = '<span class="btn-icon">🏢</span> <span class="btn-text">开始板块分析</span>';
+    elements.analyzeSectorBtn.disabled = false;
 }
 
 // 股票搜索函数
@@ -356,17 +776,44 @@ function updateChartInfo(klineData) {
     }
 }
 
-// 初始化进度显示
+// 初始化进度显示（股票分析）
 function initializeProgress() {
     // 重置整体进度
     elements.overallProgressFill.style.width = '0%';
     elements.overallProgressPercentage.textContent = '0%';
     elements.overallProgressStatus.textContent = '准备分析...';
     
-    // 生成分析师状态列表
+    // 生成分析师状态列表（排除板块分析师）
     let agentStatusHtml = '';
-    Object.keys(agentConfigs).forEach(agentType => {
+    Object.keys(agentConfigs).filter(agentType => agentType !== 'sector_analyst').forEach(agentType => {
         const config = agentConfigs[agentType];
+        agentStatusHtml += `
+            <div class="agent-status-item" id="agent-${agentType}">
+                <span class="agent-status-icon">${config.icon}</span>
+                <span class="agent-status-name">${config.name}</span>
+                <span class="agent-status-text">等待中</span>
+            </div>
+        `;
+    });
+    elements.agentStatusList.innerHTML = agentStatusHtml;
+    
+    // 清空之前的结果
+    elements.agentsGrid.innerHTML = '';
+    elements.resultsSection.style.display = 'none';
+    elements.summarySection.style.display = 'none';
+}
+
+// 初始化进度显示（板块分析）
+function initializeSectorProgress() {
+    // 重置整体进度
+    elements.overallProgressFill.style.width = '0%';
+    elements.overallProgressPercentage.textContent = '0%';
+    elements.overallProgressStatus.textContent = '准备分析...';
+    
+    // 生成板块分析师状态列表
+    let agentStatusHtml = '';
+    Object.keys(sectorAgentConfigs).forEach(agentType => {
+        const config = sectorAgentConfigs[agentType];
         agentStatusHtml += `
             <div class="agent-status-item" id="agent-${agentType}">
                 <span class="agent-status-icon">${config.icon}</span>
@@ -438,7 +885,8 @@ function updateOverallProgress() {
 
 // 更新分析师卡片
 function updateAgentCard(data) {
-    const config = agentConfigs[data.agent_type];
+    // 根据当前分析类型选择相应的配置
+    const config = appState.isAnalyzingSector ? sectorAgentConfigs[data.agent_type] : agentConfigs[data.agent_type];
     if (!config) return;
     
     let card = document.getElementById(`card-${data.agent_type}`);
@@ -594,12 +1042,19 @@ function handleAnalysisComplete(data) {
 function handleAnalysisError(data) {
     console.error('分析错误:', data);
     
+    // 恢复所有分析状态
     appState.isAnalyzing = false;
+    appState.isAnalyzingSector = false;
     
-    // 恢复按钮状态
+    // 恢复股票分析按钮状态
     elements.analyzeBtn.classList.remove('loading');
     elements.analyzeBtn.innerHTML = '<span class="btn-icon">🚀</span> <span class="btn-text">开始分析</span>';
     elements.analyzeBtn.disabled = false;
+    
+    // 恢复板块分析按钮状态
+    elements.analyzeSectorBtn.classList.remove('loading');
+    elements.analyzeSectorBtn.innerHTML = '<span class="btn-icon">🏢</span> <span class="btn-text">开始板块分析</span>';
+    elements.analyzeSectorBtn.disabled = false;
     
     showNotification('error', '分析失败', data.error || '分析过程中发生未知错误');
 }

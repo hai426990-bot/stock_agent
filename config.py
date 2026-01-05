@@ -47,5 +47,29 @@ class Config:
             'title': '投资策略师',
             'icon': '🎯',
             'color': '#f39c12'
+        },
+        'sector_analyst': {
+            'name': '刘板块',
+            'title': '板块分析师',
+            'icon': '🏢',
+            'color': '#1abc9c'
+        },
+        'sector_technical_analyst': {
+            'name': '孙板块技术',
+            'title': '板块技术分析师',
+            'icon': '📊',
+            'color': '#3498db'
+        },
+        'sector_fundamental_analyst': {
+            'name': '周板块基本面',
+            'title': '板块基本面分析师',
+            'icon': '💹',
+            'color': '#2ecc71'
+        },
+        'sector_risk_analyst': {
+            'name': '吴板块风险',
+            'title': '板块风险分析师',
+            'icon': '🛡️',
+            'color': '#e74c3c'
         }
     }

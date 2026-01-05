@@ -248,7 +248,20 @@ def analyze_stock():
         try:
             logger.info(f"开始分析股票: {stock_code}, 会话ID: {session_id}")
             stock_agent = StockAgent(callback=create_callback(session_id), session_id=session_id)
-            result = stock_agent.analyze_stock(stock_code)
+            
+            # 使用langgraph工作流进行分析
+            workflow_result = stock_agent.analysis_workflow.run({
+                'analysis_type': 'stock',
+                'stock_code': stock_code
+            })
+            
+            # 提取分析结果
+            result = {
+                'stock_code': stock_code,
+                'analyses': workflow_result.get('analyses', {}),
+                'stock_data': workflow_result.get('stock_data', {}),
+                'status': workflow_result.get('status', 'completed')
+            }
             
             flush_messages(session_id)
             
@@ -405,5 +418,177 @@ def handle_pong(*args):
         if request.sid in client_sessions:
             client_sessions[request.sid]['last_activity'] = datetime.now().isoformat()
 
+@app.route('/api/analyze_sector', methods=['POST'])
+def analyze_sector():
+    data = request.json
+    if not data:
+        return jsonify({
+            'success': False,
+            'error': '无效的请求数据'
+        }), 400
+    
+    sector_name = data.get('sector_name')
+    session_id = data.get('session_id')
+    
+    if not sector_name:
+        return jsonify({
+            'success': False,
+            'error': '请提供板块名称'
+        }), 400
+    
+    if not session_id or not isinstance(session_id, str):
+        return jsonify({
+            'success': False,
+            'error': '会话ID无效，请刷新页面重试'
+        }), 400
+    
+    # 验证板块是否存在
+    try:
+        data_fetcher = _get_data_fetcher()
+        validation_result = data_fetcher.validate_sector(sector_name)
+        
+        if not validation_result.get('exists', False):
+            return jsonify({
+                'success': False,
+                'error': f'板块 "{sector_name}" 不存在',
+                'supported_sectors': validation_result.get('supported_sectors', [])
+            }), 400
+    except Exception as e:
+        logger.exception(f"验证板块失败: {str(e)}")
+        return jsonify({
+            'success': False,
+            'error': '验证板块失败，请稍后重试'
+        }), 500
+    
+    task_id = str(uuid.uuid4())
+    
+    def create_callback(sid):
+        def callback(message):
+            websocket_callback(message, sid)
+        return callback
+    
+    def run_analysis():
+        import time
+        time.sleep(0.1)
+        
+        try:
+            logger.info(f"开始分析板块: {sector_name}, 会话ID: {session_id}")
+            stock_agent = StockAgent(callback=create_callback(session_id), session_id=session_id)
+            
+            # 使用langgraph工作流进行分析
+            workflow_result = stock_agent.analysis_workflow.run({
+                'analysis_type': 'sector',
+                'sector_name': sector_name
+            })
+            
+            # 提取分析结果
+            result = {
+                'sector_name': sector_name,
+                'analyses': workflow_result.get('analyses', {}),
+                'sector_data': workflow_result.get('sector_data', {}),
+                'status': workflow_result.get('status', 'completed')
+            }
+            
+            flush_messages(session_id)
+            
+            serialized_result = serialize_data(result)
+            
+            socketio.emit('sector_analysis_complete', {
+                'task_id': task_id,
+                'result': serialized_result
+            }, room=session_id, namespace='/')
+            logger.info(f"sector_analysis_complete 已发送: task_id={task_id}, room={session_id}")
+            
+            with thread_lock:
+                if session_id in message_buffers:
+                    del message_buffers[session_id]
+                if task_id in active_tasks:
+                    del active_tasks[task_id]
+        
+        except Exception as e:
+            logger.exception(f"板块分析过程出错: {str(e)}")
+            
+            flush_messages(session_id)
+            
+            socketio.emit('sector_analysis_error', {
+                'task_id': task_id,
+                'error': str(e)
+            }, room=session_id, namespace='/')
+            with thread_lock:
+                if session_id in message_buffers:
+                    del message_buffers[session_id]
+                if task_id in active_tasks:
+                    del active_tasks[task_id]
+    
+    socketio.start_background_task(run_analysis)
+    
+    with thread_lock:
+        active_tasks[task_id] = {
+            'sector_name': sector_name,
+            'status': 'running',
+            'session_id': session_id,
+            'timestamp': datetime.now().isoformat()
+        }
+        
+        client_sessions[session_id] = {
+            'last_activity': datetime.now().isoformat()
+        }
+    
+    return jsonify({
+        'success': True,
+        'task_id': task_id,
+        'message': '板块分析请求已提交'
+    })
+
+@app.route('/api/search_sector', methods=['GET'])
+def search_sector():
+    """搜索板块"""
+    keyword = request.args.get('keyword', '').strip()
+    if not keyword:
+        return jsonify({
+            'success': True,
+            'results': []
+        })
+    
+    try:
+        data_fetcher = _get_data_fetcher()
+        sector_list = data_fetcher.get_sector_list()
+        sectors = sector_list.get('sectors', [])
+        
+        # 简单的模糊匹配
+        filtered_sectors = []
+        for sector in sectors:
+            if keyword in sector.get('sector_name', ''):
+                filtered_sectors.append(sector)
+        
+        return jsonify({
+            'success': True,
+            'results': filtered_sectors[:10]  # 最多返回10个结果
+        })
+    except Exception as e:
+        logger.exception(f"搜索板块失败: {e}")
+        return jsonify({
+            'success': False,
+            'error': f"搜索板块失败: {str(e)}"
+        })
+
+@app.route('/api/sectors_by_category', methods=['GET'])
+def sectors_by_category():
+    """获取分类的板块列表"""
+    try:
+        data_fetcher = _get_data_fetcher()
+        sectors_data = data_fetcher.get_sectors_by_category()
+        
+        return jsonify({
+            'success': True,
+            'data': sectors_data
+        })
+    except Exception as e:
+        logger.exception(f"获取分类板块列表失败: {e}")
+        return jsonify({
+            'success': False,
+            'error': f"获取分类板块列表失败: {str(e)}"
+        }), 500
+
 if __name__ == '__main__':
-    socketio.run(app, debug=Config.FLASK_DEBUG, host='127.0.0.1', port=5000, use_reloader=False)
+    socketio.run(app, debug=Config.FLASK_DEBUG, host='0.0.0.0', port=5000, use_reloader=False)

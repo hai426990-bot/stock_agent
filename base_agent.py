@@ -85,7 +85,24 @@ class BaseAgent(ABC):
             
             logger.debug(f"{self.name}: Sending request to LLM with timeout {Config.AGENT_TIMEOUT}s")
             start_time = time.time()
-            response = self.llm.invoke(messages)
+            
+            # 添加重试逻辑
+            max_retries = 2
+            retry_delay = 1.0
+            response = None
+            
+            for attempt in range(max_retries):
+                try:
+                    response = self.llm.invoke(messages)
+                    break
+                except Exception as e:
+                    if attempt == max_retries - 1:
+                        logger.error(f"{self.name}: LLM request failed after {max_retries} attempts: {str(e)}")
+                        raise
+                    logger.warning(f"{self.name}: LLM request failed (attempt {attempt+1}/{max_retries}), retrying in {retry_delay}s: {str(e)}")
+                    time.sleep(retry_delay)
+                    retry_delay *= 2
+            
             end_time = time.time()
             logger.debug(f"{self.name}: LLM response received after {end_time - start_time:.2f}s")
             
@@ -103,12 +120,27 @@ class BaseAgent(ABC):
                 'agent_icon': self.icon,
                 'agent_color': self.color,
                 'result': analysis_result,
-                'raw_response': full_response
+                'raw_response': full_response,
+                'status': 'success',
+                'processing_time': round(end_time - start_time, 2)
             }
         except Exception as e:
             logger.exception(f"{self.name}: Analysis error: {str(e)}")
             self._notify('error', 0, f"{self.name}分析出错: {str(e)}")
-            raise
+            # 返回错误信息，而不是直接抛出异常，提高系统的健壮性
+            return {
+                'agent_type': self.agent_type,
+                'agent_name': self.name,
+                'agent_title': self.title,
+                'agent_icon': self.icon,
+                'agent_color': self.color,
+                'status': 'error',
+                'error': str(e),
+                'result': {
+                    'analysis_type': self.agent_type,
+                    'content': f"{self.name}分析出错: {str(e)}"
+                }
+            }
     
     @abstractmethod
     def _prepare_input(self, stock_data: Dict[str, Any]) -> str:

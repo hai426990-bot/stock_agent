@@ -85,26 +85,43 @@ class RiskManager(BaseAgent):
         stock_code = stock_data.get('stock_code', '')
         stock_name = stock_data.get('stock_name', '')
         current_price = stock_data.get('current_price', '')
-        high = stock_data.get('high', '')
-        low = stock_data.get('low', '')
+        market_cap = stock_data.get('market_cap', '')
         turnover_rate = stock_data.get('turnover_rate', '')
         
         financial_data = stock_data.get('financial_data', {})
         technical_indicators = stock_data.get('technical_indicators', {})
         
+        # 从技术指标获取所需数据
         volatility = technical_indicators.get('volatility', {})
         max_drawdown = technical_indicators.get('max_drawdown', {})
         risk_metrics = technical_indicators.get('risk_metrics', {})
         support_resistance = technical_indicators.get('support_resistance', {})
+        beta = technical_indicators.get('beta', {})
+        financial_leverage = technical_indicators.get('financial_leverage', {})
+        special_risks = technical_indicators.get('special_risks', {})
+        
+        # 从kline_data获取最新的价格数据
+        kline_data = stock_data.get('kline_data', [])
+        latest_kline = kline_data[-1] if kline_data else {}
+        high = latest_kline.get('最高', '')
+        low = latest_kline.get('最低', '')
+        volume = latest_kline.get('成交量', '')
+        amount = latest_kline.get('成交额', '')  # 新增成交额
         
         volatility_daily = volatility.get('volatility_daily', '待计算')
         volatility_annual = volatility.get('volatility_annual', '待计算')
         max_dd_pct = max_drawdown.get('max_drawdown_pct', '待计算')
+        annual_return = risk_metrics.get('annual_return', '待计算')
         sharpe_ratio = risk_metrics.get('sharpe_ratio', '待计算')
         sortino_ratio = risk_metrics.get('sortino_ratio', '待计算')
-        annual_return = risk_metrics.get('annual_return', '待计算')
+        risk_return_ratio = risk_metrics.get('risk_return_ratio', '待计算')  # 新增风险收益比
         nearest_support = support_resistance.get('nearest_support', '待计算')
         nearest_resistance = support_resistance.get('nearest_resistance', '待计算')
+        beta_value = beta.get('beta', '待计算')  # 新增Beta值
+        leverage_value = financial_leverage.get('financial_leverage', '待计算')  # 新增财务杠杆
+        unlock_risk = special_risks.get('unlock_risk', '待评估')  # 新增解禁风险
+        pledge_risk = special_risks.get('pledge_risk', '待评估')  # 新增质押风险
+        lawsuit_risk = special_risks.get('lawsuit_risk', '待评估')  # 新增诉讼风险
         
         input_text = f"""请对以下股票进行风险评估：
 
@@ -114,23 +131,34 @@ class RiskManager(BaseAgent):
 当前价格：{current_price}
 最高价：{high}
 最低价：{low}
+成交量：{volume}
+成交额：{amount}
 换手率：{turnover_rate}
+总市值：{market_cap}
 
 【财务风险指标】
 资产负债率：{financial_data.get('debt_ratio', '')}
 流动比率：{financial_data.get('current_ratio', '')}
+财务杠杆：{leverage_value}
 
 【市场风险指标】
+系统性风险（Beta）：{beta_value}
 日波动率：{volatility_daily}
 年化波动率：{volatility_annual}
 最大回撤：{max_dd_pct}%
 年化收益率：{annual_return}
 夏普比率：{sharpe_ratio}
 索提诺比率：{sortino_ratio}
+风险收益比：{risk_return_ratio}
 
 【技术面风险指标】
 支撑位：{nearest_support}
 阻力位：{nearest_resistance}
+
+【特殊风险指标】
+解禁风险：{unlock_risk}
+质押风险：{pledge_risk}
+诉讼风险：{lawsuit_risk}
 
 请根据以上数据，结合市场环境和风险控制原则，按照系统提示的格式输出完整的风险评估报告。
 """

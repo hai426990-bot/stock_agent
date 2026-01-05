@@ -91,6 +91,12 @@ class SentimentAnalyst(BaseAgent):
         
         fund_flow = stock_data.get('fund_flow', {})
         market_sentiment = stock_data.get('market_sentiment', {})
+        public_opinion = stock_data.get('public_opinion', {})
+        
+        news_data = public_opinion.get('news_data', {})
+        research_reports = public_opinion.get('research_reports', {})
+        social_media = public_opinion.get('social_media', {})
+        overall_sentiment = public_opinion.get('overall_sentiment', '中性')
         
         input_text = f"""请对以下股票进行市场情绪分析：
 
@@ -119,6 +125,15 @@ class SentimentAnalyst(BaseAgent):
 市场活跃度：{market_sentiment.get('activity_level', '')}
 涨停家数：{market_sentiment.get('limit_up_count', '')}
 跌停家数：{market_sentiment.get('limit_down_count', '')}
+
+【舆情分析数据】
+新闻情绪：{news_data.get('sentiment', '中性')}
+新闻关键词：{', '.join(news_data.get('keywords', []))}
+研报观点：{research_reports.get('view', '中性')}
+研报数量：{research_reports.get('report_count', 0)}份
+社交媒体热度：{social_media.get('heat_level', '中')}
+社交媒体情绪：{social_media.get('sentiment', '中性')}
+综合舆情评级：{overall_sentiment}
 
 请根据以上数据，结合行为金融学理论和市场经验，按照系统提示的格式输出完整的市场情绪分析报告。
 """

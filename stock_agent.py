@@ -8,12 +8,19 @@ from agents.fundamental_analyst import FundamentalAnalyst
 from agents.risk_manager import RiskManager
 from agents.sentiment_analyst import SentimentAnalyst
 from agents.investment_strategist import InvestmentStrategist
+from agents.sector_analyst import SectorAnalyst
+from agents.sector_technical_analyst import SectorTechnicalAnalyst
+from agents.sector_fundamental_analyst import SectorFundamentalAnalyst
+from agents.sector_risk_analyst import SectorRiskAnalyst
 from tools.data_fetcher import DataFetcher
 from tools.stock_analyzer import StockAnalyzer
 from tools.backtest_engine import BacktestEngine
 from tools.backtest_visualizer import BacktestVisualizer
 from tools.logger import logger
 from tools.performance_monitor import performance_monitor, print_stats, reset_stats
+
+# 导入工作流
+from workflows.analysis_workflow import AnalysisWorkflow
 
 class StockAgent:
     def __init__(self, callback=None, session_id=None):
@@ -29,8 +36,15 @@ class StockAgent:
             'fundamental_analyst': FundamentalAnalyst(callback, session_id),
             'risk_manager': RiskManager(callback, session_id),
             'sentiment_analyst': SentimentAnalyst(callback, session_id),
-            'investment_strategist': InvestmentStrategist(callback, session_id)
+            'investment_strategist': InvestmentStrategist(callback, session_id),
+            'sector_analyst': SectorAnalyst(callback, session_id),
+            'sector_technical_analyst': SectorTechnicalAnalyst(callback, session_id),
+            'sector_fundamental_analyst': SectorFundamentalAnalyst(callback, session_id),
+            'sector_risk_analyst': SectorRiskAnalyst(callback, session_id)
         }
+        
+        # 初始化分析工作流
+        self.analysis_workflow = AnalysisWorkflow(self)
 
     @property
     def backtest_engine(self) -> BacktestEngine:
@@ -106,18 +120,33 @@ class StockAgent:
                 self._notify("正在获取市场情绪数据...")
                 return self.data_fetcher.get_market_sentiment()
             
-            with ThreadPoolExecutor(max_workers=5) as executor:
+            def fetch_public_opinion():
+                self._notify("正在获取舆情数据...")
+                return self.data_fetcher.get_public_opinion(stock_code)
+            
+            def fetch_industry_comparison():
+                self._notify("正在获取行业比较数据...")
+                return self.data_fetcher.get_industry_comparison(stock_code)
+            
+            def fetch_valuation_data():
+                self._notify("正在获取估值数据...")
+                return self.data_fetcher.get_valuation_data(stock_code)
+            
+            with ThreadPoolExecutor(max_workers=8) as executor:
                 future_to_name = {
                     executor.submit(fetch_stock_info): 'stock_info',
                     executor.submit(fetch_kline_data): 'kline_data',
                     executor.submit(fetch_financial_data): 'financial_data',
                     executor.submit(fetch_fund_flow): 'fund_flow',
-                    executor.submit(fetch_market_sentiment): 'market_sentiment'
+                    executor.submit(fetch_market_sentiment): 'market_sentiment',
+                    executor.submit(fetch_public_opinion): 'public_opinion',
+                    executor.submit(fetch_industry_comparison): 'industry_comparison',
+                    executor.submit(fetch_valuation_data): 'valuation_data'
                 }
                 
                 results = {}
                 pending = set(future_to_name.keys())
-                data_fetch_deadline = time.monotonic() + 15.0
+                data_fetch_deadline = time.monotonic() + 20.0  # 增加超时时间
                 while pending:
                     remaining = data_fetch_deadline - time.monotonic()
                     if remaining <= 0:
@@ -146,10 +175,15 @@ class StockAgent:
             financial_data = results.get('financial_data') or {}
             fund_flow = results.get('fund_flow') or {}
             market_sentiment = results.get('market_sentiment') or {}
+            public_opinion = results.get('public_opinion') or {}
+            industry_comparison = results.get('industry_comparison') or {}
+            valuation_data = results.get('valuation_data') or {}
             
             logger.debug(f"[股票分析] 股票信息获取成功: {stock_info}")
             logger.debug(f"[股票分析] K线数据获取成功, 长度: {len(kline_data) if isinstance(kline_data, pd.DataFrame) else 'N/A'}")
             logger.debug(f"[股票分析] 财务数据获取成功: {financial_data}")
+            logger.debug(f"[股票分析] 行业比较数据获取成功: {industry_comparison}")
+            logger.debug(f"[股票分析] 估值数据获取成功: {valuation_data}")
             logger.debug(f"[股票分析] 资金流向数据获取成功: {fund_flow}")
             logger.debug(f"[股票分析] 市场情绪数据获取成功: {market_sentiment}")
             
@@ -178,6 +212,36 @@ class StockAgent:
                     'activity_level': '0%',
                     'limit_up_count': 0,
                     'limit_down_count': 0
+                },
+                'public_opinion': public_opinion or {
+                    'news_data': {
+                        'sentiment': '中性',
+                        'keywords': []
+                    },
+                    'research_reports': {
+                        'view': '中性',
+                        'report_count': 0
+                    },
+                    'social_media': {
+                        'heat_level': '中',
+                        'sentiment': '中性'
+                    },
+                    'overall_sentiment': '中性'
+                },
+                'industry_comparison': industry_comparison or {
+                    'industry_pe': '25.0',
+                    'industry_pb': '3.5',
+                    'industry_roe': '15.0',
+                    'industry_growth_rate': '10.0'
+                },
+                'valuation_data': valuation_data or {
+                    'current_price': 0,
+                    'pe_ratio': 0,
+                    'pb_ratio': 0,
+                    'eps': 0,
+                    'book_value_per_share': 0,
+                    'peg_ratio': 0,
+                    'dividend_yield': 0
                 }
             }
             
@@ -194,7 +258,20 @@ class StockAgent:
                     'debt_ratio': '',
                     'current_ratio': '',
                     'revenue_growth': '',
-                    'profit_growth': ''
+                    'profit_growth': '',
+                    'inventory_turnover': '',
+                    'accounts_receivable_turnover': '',
+                    'total_asset_turnover': '',
+                    'operating_cash_flow': '',
+                    'operating_cash_flow_per_share': '',
+                    'cash_flow_ratio': '',
+                    'eps': '',
+                    'book_value_per_share': '',
+                    'cash_per_share': '',
+                    'operating_profit_margin': '',
+                    'return_on_operating_assets': '',
+                    'operating_revenue_growth': '',
+                    'operating_profit_growth': ''
                 }
             
             # 确保资金流向数据有默认值
@@ -206,6 +283,45 @@ class StockAgent:
                     'large_net_inflow': '',
                     'medium_net_inflow': '',
                     'small_net_inflow': ''
+                }
+            
+            # 确保舆情数据有默认值
+            if not stock_data['public_opinion']:
+                stock_data['public_opinion'] = {
+                    'news_data': {
+                        'sentiment': '中性',
+                        'keywords': []
+                    },
+                    'research_reports': {
+                        'view': '中性',
+                        'report_count': 0
+                    },
+                    'social_media': {
+                        'heat_level': '中',
+                        'sentiment': '中性'
+                    },
+                    'overall_sentiment': '中性'
+                }
+            
+            # 确保行业比较数据有默认值
+            if not stock_data['industry_comparison']:
+                stock_data['industry_comparison'] = {
+                    'industry_pe': '25.0',
+                    'industry_pb': '3.5',
+                    'industry_roe': '15.0',
+                    'industry_growth_rate': '10.0'
+                }
+            
+            # 确保估值数据有默认值
+            if not stock_data['valuation_data']:
+                stock_data['valuation_data'] = {
+                    'current_price': 0,
+                    'pe_ratio': 0,
+                    'pb_ratio': 0,
+                    'eps': 0,
+                    'book_value_per_share': 0,
+                    'peg_ratio': 0,
+                    'dividend_yield': 0
                 }
             
             logger.debug("[股票分析] 数据完整性检查完成")
@@ -272,10 +388,17 @@ class StockAgent:
             # 打印性能统计报告
             print_stats()
             
+            # 提取综合评分
+            strategy_result = analyses.get('investment_strategist', {})
+            comprehensive_rating = strategy_result.get('comprehensive_rating', '持有')
+            comprehensive_score = strategy_result.get('comprehensive_score', 3)
+            
             return {
                 'stock_code': stock_code,
                 'stock_name': stock_data['stock_name'],
                 'current_price': stock_data['current_price'],
+                'comprehensive_rating': comprehensive_rating,
+                'comprehensive_score': comprehensive_score,
                 'analyses': analyses,
                 'stock_data': stock_data,
                 'status': 'completed'
@@ -307,6 +430,82 @@ class StockAgent:
                 'color': agent.color
             })
         return agent_info
+    
+    @performance_monitor
+    def analyze_sector(self, sector_name: str) -> Dict[str, Any]:
+        # 重置性能统计
+        reset_stats()
+        logger.info(f"[板块分析] 开始分析板块: {sector_name}")
+        self._notify(f"开始分析板块 {sector_name}...")
+        
+        self._notify_agent('data_downloader', 'analyzing', 10, '开始下载板块数据...')
+        
+        try:
+            logger.debug("[板块分析] 获取板块数据...")
+            self._notify(f"正在获取板块数据...")
+            self._notify_agent('data_downloader', 'analyzing', 30, '正在获取板块数据...')
+            
+            # 获取板块综合数据
+            sector_data = self.data_fetcher.get_sector_data(sector_name)
+            
+            logger.debug("[板块分析] 板块数据获取成功")
+            logger.debug(f"[板块分析] 板块数据: {sector_data}")
+            
+            self._notify_agent('data_downloader', 'completed', 100, '板块数据下载完成')
+            
+            analyses = {}
+            
+            logger.debug(f"[板块分析] 启动板块分析师...")
+            
+            # 使用多个板块分析师进行分析
+            sector_analysts = [
+                ('sector_analyst', '板块分析师'),
+                ('sector_technical_analyst', '板块技术分析师'),
+                ('sector_fundamental_analyst', '板块基本面分析师'),
+                ('sector_risk_analyst', '板块风险分析师')
+            ]
+            
+            for agent_key, agent_name in sector_analysts:
+                try:
+                    analyst = self.agents[agent_key]
+                    self._notify(f"启动 {analyst.name} 分析...")
+                    result = analyst.analyze(sector_data)
+                    logger.debug(f"[板块分析] {agent_name}分析完成: {result}")
+                    analyses[agent_key] = result
+                except Exception as e:
+                    logger.error(f"[板块分析] {agent_name}分析失败: {e}")
+                    analyses[agent_key] = {
+                        'error': str(e),
+                        'status': 'failed'
+                    }
+            
+            logger.info("[板块分析] 板块分析完成")
+            self._notify("板块分析完成！")
+            
+            # 打印性能统计报告
+            print_stats()
+            
+            return {
+                'sector_name': sector_name,
+                'analyses': analyses,
+                'sector_data': sector_data,
+                'status': 'completed'
+            }
+        
+        except Exception as e:
+            logger.error(f"[板块分析] 分析失败: {e}")
+            import traceback
+            logger.exception("[板块分析] 分析失败详细信息:")
+            self._notify(f"板块分析失败: {str(e)}")
+            
+            # 打印性能统计报告（即使失败）
+            print_stats()
+            
+            return {
+                'sector_name': sector_name,
+                'error': str(e),
+                'status': 'failed'
+            }
     
     @performance_monitor
     def backtest_strategy(self, stock_code: str, strategy_content: str = None, strategy_signals: Dict[str, Any] = None) -> Dict[str, Any]:

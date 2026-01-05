@@ -129,8 +129,28 @@ class InvestmentStrategist(BaseAgent):
         return input_text
     
     def _parse_result(self, result: str) -> Dict[str, Any]:
+        # 解析综合评级文本，提取评级
+        import re
+        rating_pattern = r'• 综合评级：\[(强烈买入|买入|持有|卖出|强烈卖出)\]'
+        match = re.search(rating_pattern, result)
+        rating = match.group(1) if match else '持有'
+        
+        # 评分转换规则
+        rating_score_map = {
+            '强烈买入': 5,
+            '买入': 4,
+            '持有': 3,
+            '卖出': 2,
+            '强烈卖出': 1
+        }
+        
+        # 计算综合评分
+        comprehensive_score = rating_score_map.get(rating, 3)
+        
         return {
             'analysis_type': 'strategy',
             'content': result,
-            'is_final': True
+            'is_final': True,
+            'comprehensive_rating': rating,
+            'comprehensive_score': comprehensive_score
         }
