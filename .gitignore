@@ -1,55 +1,25 @@
-.env
-.env.local
-.env.*.local
-
-# Trae AI configuration and documents
-.trae/
-
-# Cache directory
-cache/
-
-# Logs directory
-logs/
-
-# Python cache files
+# Byte-compiled / optimized / DLL files
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
+*.py[cod]
+*$py.class
 
-# Python virtual environment
-venv/
+# Environments
+.env
+.venv
 env/
-.venv/
-.env/
+venv/
+ENV/
+env.bak/
+venv.bak/
 
-# IDE directories and files
-.idea/
+# Streamlit
+.streamlit/
+
+# Analysis history
+analysis_history/
+
+# IDE
 .vscode/
+.idea/
 *.swp
 *.swo
-*~
-.DS_Store
-
-# Build files
-build/
-dist/
-*.egg-info/
-
-# Temporary files
-*.tmp
-*.temp
-*.log
-
-# OS generated files
-Thumbs.db
-.DS_Store
-.DS_Store?
-._*
-.Spotlight-V100
-.Trashes
-ehthumbs.db
-
-# Agents __init__.py file
-agents/__init__.py
-agents/__pycache__/__init__.cpython-313.pyc

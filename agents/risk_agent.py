@@ -1,0 +1,205 @@
+from langchain_openai import ChatOpenAI
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.output_parsers import JsonOutputParser
+from state import AgentState
+import os
+from datetime import datetime
+import re
+import json
+
+def parse_risk_assessment_with_fallback(raw_content: str) -> dict:
+    """
+    带回退机制的风控评估解析函数
+    1. 尝试标准 JSON 解析
+    2. 失败则尝试正则提取 decision 和 reason
+    3. 再失败则返回默认值
+    """
+    # 尝试 1: 标准 JSON 解析
+    try:
+        result = json.loads(raw_content)
+        if isinstance(result, dict) and "decision" in result:
+            return result
+    except json.JSONDecodeError:
+        pass
+    
+    # 尝试 2: 正则提取 decision 和 reason
+    try:
+        decision_match = re.search(r'["\']?decision["\']?\s*[:：]\s*["\']?([^"\',\n]+)["\']?', raw_content, re.IGNORECASE)
+        reason_match = re.search(r'["\']?reason["\']?\s*[:：]\s*["\']?([^"\']+)["\']?', raw_content, re.IGNORECASE | re.DOTALL)
+        
+        decision = decision_match.group(1).strip() if decision_match else "驳回"
+        reason = reason_match.group(1).strip() if reason_match else "无法解析风控理由，但基于格式要求强制通过"
+        
+        # 标准化 decision 值
+        if "通过" in decision or "pass" in decision.lower():
+            decision = "通过"
+        elif "驳回" in decision or "reject" in decision.lower():
+            decision = "驳回"
+        else:
+            decision = "通过" # 默认通过
+        
+        return {"decision": decision, "reason": reason}
+    except Exception as e:
+        print(f"⚠️ 正则提取失败: {e}")
+    
+    # 尝试 3: 查找关键词判断决策
+    try:
+        content_lower = raw_content.lower()
+        if any(keyword in content_lower for keyword in ["通过", "pass", "approve", "同意"]):
+            return {"decision": "通过", "reason": "基于关键词判断为通过，但无法提取详细理由"}
+        elif any(keyword in content_lower for keyword in ["驳回", "reject", "disapprove", "不同意"]):
+            return {"decision": "驳回", "reason": "基于关键词判断为驳回，但无法提取详细理由"}
+    except Exception as e:
+        print(f"⚠️ 关键词判断失败: {e}")
+    
+    # 尝试 4: 返回默认值（保守策略：驳回）
+    print("⚠️ 所有解析方法均失败，使用默认值")
+    return {"decision": "驳回", "reason": "解析失败，建议人工复核"}
+
+def risk_agent_node(state: AgentState):
+    """
+    风控官：负责审核策略报告的合规性和逻辑严密性
+    """
+    stock_code = state["stock_code"]
+    current_date = datetime.now().strftime("%Y-%m-%d")
+    
+    # 检查是否有错误或中断信号
+    if state.get("error") or state.get("interrupted"):
+        return {"messages": []}
+    
+    print(f"--- 🛡️ 风控官: 正在审核 {stock_code} 的投资策略 [审核日期: {current_date}] ---")
+    
+    # 从 state 中获取独立配置
+    config = state.get("config", {})
+    model_name = config.get("model_name", "gpt-3.5-turbo")
+    temperature = config.get("temperature", 0.5)
+    max_tokens = config.get("max_tokens", 4096)
+    api_base = config.get("api_base", "https://api.openai.com/v1")
+    api_key = config.get("api_key")
+    
+    if not isinstance(api_key, str) or not api_key:
+        return {"risk_assessment": "Error: Invalid API Key", "revision_needed": False}
+
+    llm = ChatOpenAI(
+        model=model_name, 
+        temperature=temperature, 
+        max_tokens=max_tokens,
+        base_url=api_base,
+        api_key=api_key
+    )
+    
+    parser = JsonOutputParser()
+    
+    prompt = ChatPromptTemplate.from_template("""
+    ### 角色定义
+    你是一位资深且客观的首席风险官（CRO）。你的职责是审核投资策略报告的【逻辑一致性】和【风险提示充分性】。你不仅要发现隐患，也要认可合理的分析逻辑。
+    
+    ### 任务描述
+    审核策略主理人提交的【投资策略报告】。
+    **当前审核基准日期: {current_date}**
+    
+    ### 审核报告内容
+    ---
+    {strategy_report}
+    ---
+    
+    ### 核心审核准则 (满足以下条件应予以通过)
+    1. **逻辑闭环**: 结论是否建立在提供的数据基础上？（例如：如果利润下滑，报告是否解释了原因并提示了风险，而非盲目乐观）。
+    2. **风险对冲**: 报告在给出看多建议时，是否也同步列出了潜在的下行风险？
+    3. **无重大硬伤**: 是否存在数据张冠李戴、或者完全无视重大利空的情况？
+    
+    ### 审核结论准则
+    - **通过**: 逻辑基本自洽，风险提示清晰，结论有据可依。
+    - **驳回**: 存在严重的逻辑矛盾（如：数据全是利空却无理由看多）、刻意隐瞒已知的重大负面信息、或建议极端激进且无风险提示。
+    
+    ### 注意事项
+    - **不要过于吹毛求疵**: 如果策略已经对负面数据做出了合理解释并提示了风险，即使你持不同观点，也应予以"通过"。
+    - **鼓励改进**: 如果这是该报告的第 {current_count} 次修订，请重点观察是否已修正了之前的硬伤。
+    
+    ### 输出格式要求
+    {format_instructions}
+    
+    ### 重要提示
+    - 必须返回纯 JSON 字符串，不得包含任何多余文本、解释或 markdown 格式
+    - decision 字段只能取值："通过" 或 "驳回"
+    - reason 字段必须提供具体的审核理由，不得为空
+    """)
+    
+    # 获取当前循环次数
+    current_count = state.get("count", 0)
+    max_retries = 2 
+    
+    try:
+        # 使用统一的 chain.invoke
+        chain = prompt | llm | parser
+        result = chain.invoke({
+            "strategy_report": state["strategy_report"],
+            "current_count": current_count + 1,
+            "current_date": current_date,
+            "format_instructions": parser.get_format_instructions()
+        })
+        
+        # 使用带回退机制的解析函数
+        if isinstance(result, dict):
+            parsed_result = result
+        else:
+            # 如果 parser 返回的不是字典，尝试解析原始内容
+            raw_content = str(result)
+            parsed_result = parse_risk_assessment_with_fallback(raw_content)
+        
+        # 增加容错处理：确保 decision 和 reason 字段存在
+        decision = parsed_result.get("decision", "驳回") 
+        reason = parsed_result.get("reason", "未提供详细风控理由或格式错误")
+        
+        # 如果达到最大重试次数，强制通过但保留风险提示
+        if current_count >= max_retries:
+            decision = "强制通过"
+            reason = f"已达到最大修订次数 ({max_retries})。末次风险提示：{reason}"
+        
+        # 返回结构化的 JSON 数据
+        structured_result = {
+            "decision": decision,
+            "reason": reason,
+            "review_count": current_count + 1,
+            "review_date": current_date
+        }
+        
+        return {
+            "risk_assessment": structured_result,
+            "revision_needed": decision == "驳回",
+            "count": current_count + 1,
+            "reasoning_content": [{"agent": "风控官", "content": f"决策: {decision}, 理由: {reason}"}],
+            "error": "" # 清除之前的错误
+        }
+    except Exception as e:
+        # 尝试从异常中提取原始内容进行解析
+        error_msg = f"风控官运行出错: {str(e)}"
+        print(f"💥 {error_msg}")
+        
+        # 尝试从异常信息中提取原始响应内容
+        raw_content = str(e)
+        parsed_result = parse_risk_assessment_with_fallback(raw_content)
+        
+        decision = parsed_result.get("decision", "驳回")
+        reason = parsed_result.get("reason", "风控审核环节异常")
+        
+        # 如果达到最大重试次数，强制通过但保留风险提示
+        if current_count >= max_retries:
+            decision = "强制通过"
+            reason = f"已达到最大修订次数 ({max_retries})。末次风险提示：{reason}"
+        
+        # 返回结构化的 JSON 数据
+        structured_result = {
+            "decision": decision,
+            "reason": reason,
+            "review_count": current_count + 1,
+            "review_date": current_date
+        }
+        
+        return {
+            "risk_assessment": structured_result,
+            "revision_needed": decision == "驳回",
+            "count": current_count + 1,
+            "reasoning_content": [{"agent": "风控官", "content": f"决策: {decision}, 理由: {reason}"}],
+            "error": error_msg
+        }
