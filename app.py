@@ -17,8 +17,8 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# 加载环境变量
-load_dotenv()
+# 加载环境变量（覆盖系统环境变量以确保使用 .env 文件中的值）
+load_dotenv(override=True)
 
 # 模型探测缓存文件路径
 MODEL_CACHE_FILE = Path(__file__).parent / ".model_cache.json"
@@ -140,7 +140,7 @@ with st.sidebar:
 
     with config_tab:
         # 获取默认模型，统一使用 OPENAI_MODEL_NAME
-        default_model = os.getenv("OPENAI_MODEL_NAME", "gpt-4o")
+        default_model = os.getenv("OPENAI_MODEL_NAME") or os.getenv("OPENAI_MODEL") or "gpt-4o"
         common_models = ["gpt-4o", "gpt-4-turbo", "gpt-3.5-turbo", "mimo-v2-flash"]
         
         # 如果默认模型不在常用列表中，将其加入
@@ -161,7 +161,7 @@ with st.sidebar:
         
         api_base = st.text_input(
             "API Base URL (代理地址)", 
-            value=os.getenv("OPENAI_API_BASE", "https://api.openai.com/v1")
+            value=os.getenv("OPENAI_API_BASE") or os.getenv("OPENAI_BASE_URL") or "https://api.openai.com/v1"
         )
         api_key = st.text_input(
             "API Key", 

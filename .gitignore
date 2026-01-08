@@ -18,6 +18,10 @@ venv.bak/
 # Analysis history
 analysis_history/
 
+# Caches
+.akshare_cache.json
+.model_cache.json
+
 # IDE
 .vscode/
 .idea/

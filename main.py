@@ -29,8 +29,8 @@ def setup_utf8_encoding():
 
 setup_utf8_encoding()
 
-# 加载环境变量
-load_dotenv()
+# 加载环境变量（覆盖系统环境变量以确保使用 .env 文件中的值）
+load_dotenv(override=True)
 
 # 模型探测缓存文件路径
 MODEL_CACHE_FILE = Path(__file__).parent / ".model_cache.json"
@@ -133,8 +133,10 @@ def run_alpha_flow(input_str: str):
     """
     # 检查并获取 API Key
     api_key = os.getenv("OPENAI_API_KEY")
-    api_base = os.getenv("OPENAI_API_BASE", "https://api.openai.com/v1")
-    model_name = os.getenv("OPENAI_MODEL_NAME", "gpt-4o")
+    
+    # 支持多种环境变量命名方式
+    api_base = os.getenv("OPENAI_API_BASE") or os.getenv("OPENAI_BASE_URL") or "https://api.openai.com/v1"
+    model_name = os.getenv("OPENAI_MODEL_NAME") or os.getenv("OPENAI_MODEL") or "gpt-4o"
 
     if not api_key or api_key == "your_openai_api_key":
         print("⚠️ 错误: 请在 .env 文件中配置有效的 OPENAI_API_KEY")
@@ -204,15 +206,39 @@ def run_alpha_flow(input_str: str):
     
     print(f"\n🚀 AlphaFlow 启动: 正在分析股票 {stock_code} ({stock_name})...\n")
     
+    import threading
+    import itertools
+    import time
+    import sys
+
+    # 简单的加载动画
+    stop_loading = False
+    def loading_spinner(desc="正在分析中"):
+        spinner = itertools.cycle(['⣾', '⣽', '⣻', '⢿', '⡿', '⣟', '⣯', '⣷'])
+        while not stop_loading:
+            sys.stdout.write(f"\r{next(spinner)} {desc}...")
+            sys.stdout.flush()
+            time.sleep(0.1)
+        sys.stdout.write(f"\r✅ {desc} 完成!          \n")
+        sys.stdout.flush()
+
     # 运行
     try:
         # 使用 stream 模式以便在节点出错时及时发现
         final_state = initial_state
+        
+        # 启动加载动画
+        spinner_thread = threading.Thread(target=loading_spinner, args=("多智能体协作中",))
+        spinner_thread.daemon = True
+        spinner_thread.start()
+        
         for output in app.stream(initial_state):
             for node_name, state_update in output.items():
                 final_state.update(state_update)
                 # 检查是否有错误发生
                 if final_state.get("error"):
+                    stop_loading = True
+                    spinner_thread.join()
                     print(f"\n🛑 流程因节点错误中止: {final_state['error']}")
                     print("💡 常见错误解决方案:")
                     print("   - 模型不支持: 请在 .env 文件中配置 SUPPORTED_MODELS")
@@ -222,9 +248,14 @@ def run_alpha_flow(input_str: str):
                     return
                 # 检查是否有中断信号
                 if final_state.get("interrupted"):
+                    stop_loading = True
+                    spinner_thread.join()
                     print(f"\n⏸️ 流程被用户中断")
                     return
         
+        stop_loading = True
+        spinner_thread.join()
+
         # 输出最终结果
         print("\n" + "="*50)
         print("📦 数据缓存状态")
