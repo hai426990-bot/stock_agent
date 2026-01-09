@@ -196,8 +196,8 @@ def run_alpha_flow(input_str: str):
             "api_key": api_key,
             "api_base": api_base,
             "model_name": model_name,
-            "temperature": 0.5,
-            "max_tokens": 4096
+            "temperature": 0.3,
+            "max_tokens": 8192
         }
     }
     

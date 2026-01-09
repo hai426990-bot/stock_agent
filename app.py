@@ -172,8 +172,8 @@ with st.sidebar:
         if not api_key:
             st.warning("⚠️ 请输入 API Key 以开始分析")
         
-        temperature = st.slider("Temperature (随机性)", 0.0, 1.0, 0.5, 0.1)
-        max_tokens = st.select_slider("Max Tokens (最大长度)", options=[1024, 2048, 4096, 8192, 16384, 32768], value=4096)
+        temperature = st.slider("Temperature (随机性)", 0.0, 1.0, 0.3, 0.1)
+        max_tokens = st.select_slider("Max Tokens (最大长度)", options=[1024, 2048, 4096, 8192, 16384, 32768], value=8192)
         
         thinking_mode = st.toggle("开启深度思考模式 (Thinking Mode)", value=True)
         
