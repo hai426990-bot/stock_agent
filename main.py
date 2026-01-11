@@ -29,8 +29,8 @@ def setup_utf8_encoding():
 
 setup_utf8_encoding()
 
-# 加载环境变量
-load_dotenv()
+# 加载环境变量，优先使用系统已设置的环境变量 (override=False)
+load_dotenv(override=False)
 
 # 模型探测缓存文件路径
 MODEL_CACHE_FILE = Path(__file__).parent / ".model_cache.json"
@@ -134,15 +134,38 @@ def run_alpha_flow(input_str: str):
     # 检查并获取 API Key
     api_key = os.getenv("OPENAI_API_KEY")
     api_base = os.getenv("OPENAI_API_BASE", "https://api.openai.com/v1")
-    model_name = os.getenv("OPENAI_MODEL_NAME", "gpt-4o")
+    # 优先获取用户在环境变量中显式指定的模型名称
+    model_name = os.getenv("MODEL_NAME") or os.getenv("OPENAI_MODEL_NAME")
 
     if not api_key or api_key == "your_openai_api_key":
         print("⚠️ 错误: 请在 .env 文件中配置有效的 OPENAI_API_KEY")
         return
 
-    # 模型自动探测和降级
+    # 模型可用性预检
     print(f"\n🧪 模型可用性预检...")
-    available_model = detect_available_model(api_key, api_base)
+    
+    # 如果环境变量已经指定了模型，先尝试使用该模型
+    available_model = None
+    if model_name:
+        print(f"  尝试使用环境变量指定的模型: {model_name}...")
+        from langchain_openai import ChatOpenAI
+        try:
+            llm = ChatOpenAI(
+                model=model_name,
+                api_key=api_key,
+                base_url=api_base,
+                max_tokens=5,
+                timeout=10
+            )
+            llm.invoke("hi")
+            available_model = model_name
+            print(f"  ✅ 指定模型 {model_name} 可用")
+        except Exception as e:
+            print(f"  ❌ 指定模型 {model_name} 不可用，将尝试自动探测其他可用模型...")
+    
+    # 如果指定模型不可用或未指定，则进行自动探测
+    if not available_model:
+        available_model = detect_available_model(api_key, api_base)
     
     if not available_model:
         print("\n❌ 错误: 无法找到可用的模型")
@@ -194,8 +217,9 @@ def run_alpha_flow(input_str: str):
             "api_key": api_key,
             "api_base": api_base,
             "model_name": model_name,
-            "temperature": 0.5,
-            "max_tokens": 4096
+            "temperature": 0.3,
+            "max_tokens": 8196,
+            "thinking_mode": True
         }
     }
     

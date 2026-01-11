@@ -80,12 +80,17 @@ def risk_agent_node(state: AgentState):
     if not isinstance(api_key, str) or not api_key:
         return {"risk_assessment": "Error: Invalid API Key", "revision_needed": False}
 
+    # 深度思考模式配置
+    model_kwargs = {}
+    # NVIDIA/OpenAI 接口通常不需要显式设置 include_reasoning
+
     llm = ChatOpenAI(
         model=model_name, 
         temperature=temperature, 
         max_tokens=max_tokens,
         base_url=api_base,
-        api_key=api_key
+        api_key=api_key,
+        model_kwargs=model_kwargs
     )
     
     parser = JsonOutputParser()
@@ -130,14 +135,25 @@ def risk_agent_node(state: AgentState):
     max_retries = 2 
     
     try:
-        # 使用统一的 chain.invoke
-        chain = prompt | llm | parser
-        result = chain.invoke({
-            "strategy_report": state["strategy_report"],
-            "current_count": current_count + 1,
-            "current_date": current_date,
-            "format_instructions": parser.get_format_instructions()
-        })
+        # 手动渲染 prompt 并调用 llm
+        prompt_str = prompt.format(
+            strategy_report=state["strategy_report"],
+            current_count=current_count + 1,
+            current_date=current_date,
+            format_instructions=parser.get_format_instructions()
+        )
+        
+        raw_res = llm.invoke(prompt_str)
+        
+        # 提取思考过程 (针对 DeepSeek 等模型)
+        reasoning = raw_res.additional_kwargs.get("reasoning_content", "")
+        
+        # 解析结果
+        try:
+            result = parser.parse(raw_res.content)
+        except Exception as pe:
+            print(f"JSON 解析失败，尝试回退解析: {pe}")
+            result = parse_risk_assessment_with_fallback(raw_res.content)
         
         # 使用带回退机制的解析函数
         if isinstance(result, dict):
@@ -168,7 +184,7 @@ def risk_agent_node(state: AgentState):
             "risk_assessment": structured_result,
             "revision_needed": decision == "驳回",
             "count": current_count + 1,
-            "reasoning_content": [{"agent": "风控官", "content": f"决策: {decision}, 理由: {reason}"}],
+            "reasoning_content": [{"agent": "风控官", "content": reasoning if reasoning else f"决策: {decision}, 理由: {reason}"}],
             "error": "" # 清除之前的错误
         }
     except Exception as e:

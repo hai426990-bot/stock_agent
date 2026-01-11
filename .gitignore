@@ -23,3 +23,5 @@ analysis_history/
 .idea/
 *.swp
 *.swo
+.akshare_cache.json
+agents/__init__.py

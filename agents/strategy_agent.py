@@ -127,12 +127,17 @@ def strategy_agent_node(state: AgentState):
     if not isinstance(api_key, str) or not api_key:
         return {"strategy_report": "Error: Invalid API Key"}
 
+    # 深度思考模式配置
+    model_kwargs = {}
+    # NVIDIA/OpenAI 接口通常不需要显式设置 include_reasoning
+
     llm = ChatOpenAI(
         model=model_name, 
         temperature=temperature, 
         max_tokens=max_tokens,
         base_url=api_base,
-        api_key=api_key
+        api_key=api_key,
+        model_kwargs=model_kwargs
     )
 
     # 根据是否是板块调整角色和任务

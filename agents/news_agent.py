@@ -43,12 +43,19 @@ def news_agent_node(state: AgentState):
             "news_items": financial_news
         }
 
+    # 深度思考模式配置
+    model_kwargs = {}
+    # NVIDIA/OpenAI 接口通常不需要显式设置 include_reasoning，
+    # 且该参数不是 OpenAI 标准参数，会导致部分 Provider 报错。
+    # 如果 Provider 支持，推理内容通常会自动包含在响应中。
+
     llm = ChatOpenAI(
         model=model_name, 
         temperature=temperature, 
         max_tokens=max_tokens,
         base_url=api_base,
-        api_key=api_key
+        api_key=api_key,
+        model_kwargs=model_kwargs
     )
     parser = JsonOutputParser()
     

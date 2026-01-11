@@ -17,8 +17,8 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# 加载环境变量
-load_dotenv()
+# 加载环境变量，优先使用系统已设置的环境变量 (override=False)
+load_dotenv(override=False)
 
 # 模型探测缓存文件路径
 MODEL_CACHE_FILE = Path(__file__).parent / ".model_cache.json"
@@ -139,12 +139,14 @@ with st.sidebar:
                     pass
 
     with config_tab:
-        # 获取默认模型，统一使用 OPENAI_MODEL_NAME
-        default_model = os.getenv("OPENAI_MODEL_NAME", "gpt-4o")
+        # 获取默认模型，优先使用环境变量中的配置
+        default_model = os.getenv("MODEL_NAME") or os.getenv("OPENAI_MODEL_NAME") or "gpt-4o"
         common_models = ["gpt-4o", "gpt-4-turbo", "gpt-3.5-turbo", "mimo-v2-flash"]
         
-        # 如果默认模型不在常用列表中，将其加入
-        if default_model not in common_models:
+        # 如果是 DeepSeek 等自定义模型，添加到列表中
+        if "deepseek" in default_model.lower() and "deepseek-v3" not in [m.lower() for m in common_models]:
+             common_models.insert(0, default_model)
+        elif default_model not in common_models:
             common_models.insert(0, default_model)
         
         selected_model = st.selectbox(
@@ -172,8 +174,8 @@ with st.sidebar:
         if not api_key:
             st.warning("⚠️ 请输入 API Key 以开始分析")
         
-        temperature = st.slider("Temperature (随机性)", 0.0, 1.0, 0.5, 0.1)
-        max_tokens = st.select_slider("Max Tokens (最大长度)", options=[1024, 2048, 4096, 8192, 16384, 32768], value=4096)
+        temperature = st.slider("Temperature (随机性)", 0.0, 1.0, 0.3, 0.1)
+        max_tokens = st.select_slider("Max Tokens (最大长度)", options=[1024, 2048, 4096, 8192, 8196, 16384, 32768], value=8196)
         
         thinking_mode = st.toggle("开启深度思考模式 (Thinking Mode)", value=True)
         
@@ -249,30 +251,24 @@ def validate_model_st(config_params):
     from langchain_openai import ChatOpenAI
     import hashlib
     
-    # 首先尝试从持久化缓存加载
-    cached_model = load_model_cache()
-    if cached_model:
-        # 验证缓存的模型是否仍然可用
+    # 1. 优先尝试用户当前选择的模型
+    target_model = config_params.get("model_name")
+    if target_model:
         try:
             llm = ChatOpenAI(
-                model=cached_model,
+                model=target_model,
                 api_key=config_params["api_key"],
                 base_url=config_params["api_base"],
                 max_tokens=5,
                 timeout=10
             )
             llm.invoke("hi")
-            st.info(f"📦 使用模型探测缓存: {cached_model}")
-            return True, "", cached_model
+            return True, "", target_model
         except Exception as e:
-            # 缓存的模型不可用，清除缓存并继续探测
-            try:
-                if MODEL_CACHE_FILE.exists():
-                    MODEL_CACHE_FILE.unlink()
-            except:
-                pass
-    
-    # 生成缓存键
+            st.warning(f"⚠️ 选择的模型 {target_model} 验证失败，正在尝试缓存或自动探测...")
+
+    # 2. 尝试从持久化缓存加载
+    cached_model = load_model_cache()
     cache_key = hashlib.md5(
         f"{config_params['api_base']}_{config_params['model_name']}_{config_params['api_key']}".encode()
     ).hexdigest()
