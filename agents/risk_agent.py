@@ -81,20 +81,20 @@ def risk_agent_node(state: AgentState):
         return {"risk_assessment": "Error: Invalid API Key", "revision_needed": False}
 
     # 深度思考模式配置
-    extra_body = {}
+    llm_kwargs = {
+        "model": model_name, 
+        "temperature": temperature, 
+        "max_tokens": max_tokens,
+        "top_p": 0.95,
+        "base_url": api_base,
+        "api_key": api_key
+    }
+    
     if config.get("thinking_mode"):
         # 针对部分 Provider (如 NVIDIA/DeepSeek) 的深度思考配置
-        extra_body = {"chat_template_kwargs": {"thinking": True}}
+        llm_kwargs["extra_body"] = {"chat_template_kwargs": {"thinking": True}}
 
-    llm = ChatOpenAI(
-        model=model_name, 
-        temperature=temperature, 
-        max_tokens=max_tokens,
-        top_p=0.95,
-        base_url=api_base,
-        api_key=api_key,
-        extra_body=extra_body
-    )
+    llm = ChatOpenAI(**llm_kwargs)
     
     parser = JsonOutputParser()
     
@@ -118,8 +118,11 @@ def risk_agent_node(state: AgentState):
     ### 核心审核准则 (满足以下条件应予以通过)
     1. **逻辑闭环**: 结论是否建立在提供的数据基础上？（例如：如果利润下滑，报告是否解释了原因并提示了风险，而非盲目乐观）。
     2. **量化验证 (CRO 重点)**: 
-       - **多指标确认**: 审查策略逻辑是否使用了多个不相关的指标进行相互确认（例如趋势指标 MACD + 动量指标 RSI）。对于仅依赖单一指标的激进策略，应要求增加更多维度的量化验证。
-       - **过拟合审查**: 观察回测结果中的 Sharpe 和胜率是否高得不切实际（如 Sharpe > 4 或胜率 > 80%），若是，必须要求策略主理人增加样本外验证或风险警示。
+       - **多指标确认**: 审查策略逻辑是否使用了多个不相关的指标进行相互确认。特别关注复合策略的逻辑合理性：
+         - **景气轮动**: 是否考虑了宏观 PMI 与个股基本面的匹配？
+         - **攻防切换**: 波动率阈值设置是否合理，是否存在频繁调仓风险？
+         - **价值+动量+质量**: 因子权重是否均衡，是否真正实现了风险平价或多因子共振？
+       - **防止过拟合**: 警惕表现过于完美的策略，要求主理人解释策略在不同市场环境（如下行周期）下的鲁棒性。
        - **数据泄漏检查**: 检查策略逻辑是否使用了“未来函数”（虽然引擎已规避，但仍需从策略逻辑描述中审查）。
        - **回撤与风控**: 报告中提到的止损位是否与回测数据中的 Max Drawdown (MDD) 相匹配？如果 MDD 为 20% 但止损设在 5%，逻辑是否合理？
     3. **风险对冲**: 报告在给出看多建议时，是否也同步列出了潜在的下行风险？

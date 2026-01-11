@@ -24,8 +24,8 @@ def quant_agent_node(state: AgentState):
     # 1. 获取历史数据 (使用新的 DataManager 以统一 Schema)
     try:
         data_manager = DataManager()
-        # 统一获取最近一年的数据进行回测
-        df = data_manager.get_data(stock_code, start_date="20230101")
+        # 统一获取最近一年的数据进行回测，并包含财务与估值指标以支持复杂策略
+        df = data_manager.get_data(stock_code, start_date="20230101", add_indicators=not is_sector)
         
         if df.empty and is_sector:
              # 如果是板块，回退到原有逻辑获取数据
@@ -255,6 +255,12 @@ def quant_agent_node(state: AgentState):
                     "upper": clean_value(last_row["BOLL_UPPER"], "BOLL上轨(20日,2σ)"),
                     "mid": clean_value(last_row["BOLL_MID"], "BOLL中轨(20日)"),
                     "lower": clean_value(last_row["BOLL_LOWER"], "BOLL下轨(20日,2σ)")
+                },
+                "fundamental": {
+                    "pe": clean_value(last_row.get("pe"), "PE(静)"),
+                    "roe": clean_value(last_row.get("roe"), "ROE(%)"),
+                    "peg": clean_value(last_row.get("peg"), "PEG"),
+                    "net_profit_growth": clean_value(last_row.get("net_profit_growth"), "净利增长(%)")
                 },
                 "volume_ratio": clean_value(volume_ratio, "量比"),
                 "patterns": patterns

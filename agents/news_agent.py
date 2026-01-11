@@ -44,20 +44,20 @@ def news_agent_node(state: AgentState):
         }
 
     # 深度思考模式配置
-    extra_body = {}
+    llm_kwargs = {
+        "model": model_name, 
+        "temperature": temperature, 
+        "max_tokens": max_tokens,
+        "top_p": 0.95,
+        "base_url": api_base,
+        "api_key": api_key
+    }
+    
     if config.get("thinking_mode"):
         # 针对部分 Provider (如 NVIDIA/DeepSeek) 的深度思考配置
-        extra_body = {"chat_template_kwargs": {"thinking": True}}
+        llm_kwargs["extra_body"] = {"chat_template_kwargs": {"thinking": True}}
 
-    llm = ChatOpenAI(
-        model=model_name, 
-        temperature=temperature, 
-        max_tokens=max_tokens,
-        top_p=0.95,
-        base_url=api_base,
-        api_key=api_key,
-        extra_body=extra_body
-    )
+    llm = ChatOpenAI(**llm_kwargs)
     parser = JsonOutputParser()
     
     prompt = ChatPromptTemplate.from_template("""
