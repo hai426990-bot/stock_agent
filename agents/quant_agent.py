@@ -1,10 +1,15 @@
 from tools.stock_data import get_stock_hist_data, get_stock_financial_indicator, get_stock_fund_flow, get_stock_industry_comparison, get_board_hist_data
 from state import AgentState
 import pandas as pd
+from backtest.data import DataManager
+from backtest.strategy import STRATEGY_REGISTRY
+from backtest.engine import VectorizedEngine
+from backtest.analytics import PerformanceAnalytics
+from backtest.persistence import BacktestPersistence
 
 def quant_agent_node(state: AgentState):
     """
-    数据分析师：负责获取 K 线数据、财务指标及资金流向
+    数据分析师：负责获取 K 线数据、财务指标及资金流向，并运行量化回测。
     """
     stock_code = state["stock_code"]
     stock_name = state["stock_name"]
@@ -16,12 +21,19 @@ def quant_agent_node(state: AgentState):
     
     print(f"--- 📊 数据分析师: 正在分析 {stock_name}({stock_code}) 的量化数据 ---")
     
-    # 1. 获取历史数据
+    # 1. 获取历史数据 (使用新的 DataManager 以统一 Schema)
     try:
-        if is_sector:
-            df = get_board_hist_data(stock_name, board_type=state.get("sector_type", "industry"), days=150)
-        else:
-            df = get_stock_hist_data(stock_code, days=150)
+        data_manager = DataManager()
+        # 统一获取最近一年的数据进行回测
+        df = data_manager.get_data(stock_code, start_date="20230101")
+        
+        if df.empty and is_sector:
+             # 如果是板块，回退到原有逻辑获取数据
+             df = get_board_hist_data(stock_name, board_type=state.get("sector_type", "industry"), days=252)
+             # 手动转换 schema
+             df = df.rename(columns={"日期": "dt", "开盘": "open", "最高": "high", "最低": "low", "收盘": "close", "成交量": "volume"})
+             df["dt"] = pd.to_datetime(df["dt"])
+             df["adj_close"] = df["close"]
         
         # 检查是否有错误或中断信号
         if state.get("error") or state.get("interrupted"):
@@ -29,7 +41,7 @@ def quant_agent_node(state: AgentState):
     except Exception as e:
         print(f"获取历史数据失败: {e}")
         df = pd.DataFrame()
-    
+
     # 板块分析跳过财务指标和资金流向排名（因为是整体分析）
     financials = {}
     fund_flow = {}
@@ -95,52 +107,52 @@ def quant_agent_node(state: AgentState):
     if isinstance(df, pd.DataFrame) and not df.empty and len(df) >= 10:
         try:
             # 确保数据按日期升序
-            df = df.sort_values('日期')
+            df = df.sort_values('dt')
             
             # 1. 均线系统 (MA)
-            df["MA5"] = df["收盘"].rolling(window=5).mean()
-            df["MA10"] = df["收盘"].rolling(window=10).mean()
-            df["MA20"] = df["收盘"].rolling(window=20).mean()
-            df["MA60"] = df["收盘"].rolling(window=60).mean()
+            df["MA5"] = df["close"].rolling(window=5).mean()
+            df["MA10"] = df["close"].rolling(window=10).mean()
+            df["MA20"] = df["close"].rolling(window=20).mean()
+            df["MA60"] = df["close"].rolling(window=60).mean()
             
             # 2. 指数平滑异同平均线 (MACD)
-            exp1 = df["收盘"].ewm(span=12, adjust=False).mean()
-            exp2 = df["收盘"].ewm(span=26, adjust=False).mean()
+            exp1 = df["close"].ewm(span=12, adjust=False).mean()
+            exp2 = df["close"].ewm(span=26, adjust=False).mean()
             df["MACD"] = exp1 - exp2
             df["Signal"] = df["MACD"].ewm(span=9, adjust=False).mean()
             df["Hist"] = df["MACD"] - df["Signal"]
             
             # 3. 相对强弱指标 (RSI)
-            delta = df["收盘"].diff()
+            delta = df["close"].diff()
             gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
             loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
             rs = gain / loss
             df["RSI"] = 100 - (100 / (1 + rs))
             
             # 4. 布林带 (BOLL)
-            df["BOLL_MID"] = df["收盘"].rolling(window=20).mean()
-            df["BOLL_STD"] = df["收盘"].rolling(window=20).std()
+            df["BOLL_MID"] = df["close"].rolling(window=20).mean()
+            df["BOLL_STD"] = df["close"].rolling(window=20).std()
             df["BOLL_UPPER"] = df["BOLL_MID"] + 2 * df["BOLL_STD"]
             df["BOLL_LOWER"] = df["BOLL_MID"] - 2 * df["BOLL_STD"]
             
             # 5. 随机指标 (KDJ)
-            low_list = df["最低"].rolling(9, min_periods=9).min()
-            high_list = df["最高"].rolling(9, min_periods=9).max()
-            rsv = (df["收盘"] - low_list) / (high_list - low_list) * 100
+            low_list = df["low"].rolling(9, min_periods=9).min()
+            high_list = df["high"].rolling(9, min_periods=9).max()
+            rsv = (df["close"] - low_list) / (high_list - low_list) * 100
             df["KDJ_K"] = rsv.ewm(com=2).mean()
             df["KDJ_D"] = df["KDJ_K"].ewm(com=2).mean()
-            df["KDJ_J"] = 3 * df["KDJ_K"] - 2 * df["KDJ_D"]
+            df["KDJ_J" ] = 3 * df["KDJ_K"] - 2 * df["KDJ_D"]
             
             # 6. 成交量分析
-            df["VMA5"] = df["成交量"].rolling(window=5).mean()
-            df["VMA10"] = df["成交量"].rolling(window=10).mean()
+            df["VMA5"] = df["volume"].rolling(window=5).mean()
+            df["VMA10"] = df["volume"].rolling(window=10).mean()
             
             # 仅对基础列填充 NaN，保留技术指标的 NaN 以避免误导形态识别
-            base_cols = ["开盘", "收盘", "最高", "最低", "成交量", "成交额"]
+            base_cols = ["open", "close", "high", "low", "volume", "adj_close"]
             df[base_cols] = df[base_cols].fillna(0)
             
             vma5_last = df["VMA5"].iloc[-1] if not pd.isna(df["VMA5"].iloc[-1]) else 0
-            volume_ratio = df["成交量"].iloc[-1] / vma5_last if vma5_last != 0 else 1
+            volume_ratio = df["volume"].iloc[-1] / vma5_last if vma5_last != 0 else 1
             
             # 7. 技术形态识别 (指标 + K线形态)
             last_row = df.iloc[-1]
@@ -157,16 +169,16 @@ def quant_agent_node(state: AgentState):
             if last_row["RSI"] > 75: patterns.append("RSI 超买 (警惕回调)")
             elif last_row["RSI"] < 25: patterns.append("RSI 超跌 (存在反弹需求)")
             
-            if last_row["收盘"] > last_row["BOLL_UPPER"]: patterns.append("布林带上轨压力")
-            elif last_row["收盘"] < last_row["BOLL_LOWER"]: patterns.append("布林带下轨支撑")
+            if last_row["close"] > last_row["BOLL_UPPER"]: patterns.append("布林带上轨压力")
+            elif last_row["close"] < last_row["BOLL_LOWER"]: patterns.append("布林带下轨支撑")
 
             # --- 经典 K 线形态 (基于最近两根蜡烛) ---
-            body = last_row["收盘"] - last_row["开盘"]
+            body = last_row["close"] - last_row["open"]
             abs_body = abs(body)
-            upper_shadow = last_row["最高"] - max(last_row["开盘"], last_row["收盘"])
-            lower_shadow = min(last_row["开盘"], last_row["收盘"]) - last_row["最低"]
+            upper_shadow = last_row["high"] - max(last_row["open"], last_row["close"])
+            lower_shadow = min(last_row["open"], last_row["close"]) - last_row["low"]
             
-            prev_body = prev_row["收盘"] - prev_row["开盘"]
+            prev_body = prev_row["close" ] - prev_row["open"]
             
             # 1. 锤子线/倒锤子线 (底部信号)
             if lower_shadow > 2 * abs_body and upper_shadow < 0.1 * abs_body:
@@ -175,38 +187,38 @@ def quant_agent_node(state: AgentState):
                 patterns.append("倒锤子线 (潜在底部信号)")
                 
             # 2. 十字星
-            if abs_body < (last_row["最高"] - last_row["最低"]) * 0.1:
+            if abs_body < (last_row["high"] - last_row["low"]) * 0.1:
                 patterns.append("十字星 (多空博弈激烈/变盘信号)")
                 
             # 3. 看涨/看跌吞没
-            if last_row["收盘"] > last_row["开盘"] and prev_row["收盘"] < prev_row["开盘"]:
-                if last_row["收盘"] > prev_row["开盘"] and last_row["开盘"] < prev_row["收盘"]:
+            if last_row["close"] > last_row["open"] and prev_row["close"] < prev_row["open"]:
+                if last_row["close"] > prev_row["open"] and last_row["open" ] < prev_row["close"]:
                     patterns.append("看涨吞没 (强力反转)")
-            if last_row["收盘"] < last_row["开盘"] and prev_row["收盘"] > prev_row["开盘"]:
-                if last_row["收盘"] < prev_row["开盘"] and last_row["开盘"] > prev_row["收盘"]:
+            if last_row["close"] < last_row["open"] and prev_row["close"] > prev_row["open"]:
+                if last_row["close"] < prev_row["open"] and last_row["open"] > prev_row["close"]:
                     patterns.append("看跌吞没 (强力压制)")
 
             # 4. 向上/向下跳空
-            if last_row["最低"] > prev_row["最高"]:
+            if last_row["low"] > prev_row["high"]:
                 patterns.append("向上跳空缺口 (动能强劲)")
-            if last_row["最高"] < prev_row["最低"]:
+            if last_row["high"] < prev_row["low"]:
                 patterns.append("向下跳空缺口 (恐慌抛售)")
 
             # --- 5. 量价协同分析 (专业进阶) ---
             # 计算 OBV (能量潮指标)
-            df["OBV"] = (df["成交量"] * ((df["收盘"] > df["收盘"].shift(1)).astype(int) * 2 - 1)).fillna(0).cumsum()
+            df["OBV"] = (df["volume"] * ((df["close"] > df["close"].shift(1)).astype(int) * 2 - 1)).fillna(0).cumsum()
 
-            avg_vol = df["成交量"].tail(5).mean()
-            price_change = (last_row["收盘"] - prev_row["收盘"]) / prev_row["收盘"]
-            vol_change = (last_row["成交量"] - prev_row["成交量"]) / prev_row["成交量"]
+            avg_vol = df["volume"].tail(5).mean()
+            price_change = (last_row["close"] - prev_row["close"]) / prev_row["close"]
+            vol_change = (last_row["volume"] - prev_row["volume"]) / prev_row["volume"]
 
-            if price_change > 0.02 and last_row["成交量"] > avg_vol * 1.5:
+            if price_change > 0.02 and last_row["volume"] > avg_vol * 1.5:
                 patterns.append("放量上涨 (趋势确认)")
-            elif price_change > 0.02 and last_row["成交量"] < avg_vol * 0.7:
+            elif price_change > 0.02 and last_row["volume"] < avg_vol * 0.7:
                 patterns.append("缩量上涨 (动能不足/背离)")
-            elif price_change < -0.02 and last_row["成交量"] > avg_vol * 1.5:
+            elif price_change < -0.02 and last_row["volume"] > avg_vol * 1.5:
                 patterns.append("放量下跌 (恐慌盘杀出)")
-            elif price_change < -0.02 and last_row["成交量"] < avg_vol * 0.7:
+            elif price_change < -0.02 and last_row["volume"] < avg_vol * 0.7:
                 patterns.append("无量阴跌 (阴跌无底/警惕)")
 
             # OBV 趋势判断
@@ -219,7 +231,7 @@ def quant_agent_node(state: AgentState):
                     return f"数据不足无法计算{name}"
                 return round(float(val), 3)
 
-            latest_price = last_row["收盘"]
+            latest_price = last_row["close"]
             tech_indicators = {
                 "latest_price": clean_value(latest_price, "现价"),
                 "ma_system": {
@@ -244,29 +256,57 @@ def quant_agent_node(state: AgentState):
                     "mid": clean_value(last_row["BOLL_MID"], "BOLL中轨(20日)"),
                     "lower": clean_value(last_row["BOLL_LOWER"], "BOLL下轨(20日,2σ)")
                 },
-                "volume": {
-                    "volume_ratio": clean_value(volume_ratio, "量比"),
-                    "is_vol_expanding": bool(last_row["成交量"] > df["VMA5"].iloc[-1])
-                },
-                "identified_patterns": patterns,
-                "change_pct": clean_value(last_row.get("涨跌幅", 0), "涨跌幅"),
-                "fund_flow": fund_flow
+                "volume_ratio": clean_value(volume_ratio, "量比"),
+                "patterns": patterns
             }
-        except Exception as e:
-            print(f"技术指标计算失败: {e}")
-            import traceback
-            traceback.print_exc()
-            tech_indicators = {"error": f"指标计算失败: {e}", "fund_flow": fund_flow}
-    else:
-        tech_indicators = {"error": "无法获取历史数据", "fund_flow": fund_flow}
-        
-    # 整合财务和行业数据
-    combined_quant_data = financials if isinstance(financials, dict) else {"info": financials}
-    combined_quant_data["industry_comparison"] = industry_data
+            
+            # 9. 运行量化回测 (核心升级：不再只选一个最好，而是给出候选集)
+            print(f"--- 🔄 正在运行量化策略候选回测 --- ")
+            backtest_results = []
+            engine = VectorizedEngine()
+            persistence = BacktestPersistence()
+            
+            for name, strategy_cls in STRATEGY_REGISTRY.items():
+                try:
+                    strategy = strategy_cls()
+                    run_results = engine.run(strategy, df)
+                    metrics = PerformanceAnalytics.calculate_metrics(run_results)
+                    
+                    # 保存回测记录
+                    persistence.save_result(name, strategy.params.model_dump(), metrics, 
+                                          {"symbol": stock_code, "data_len": len(df)})
+                    
+                    backtest_results.append({
+                        "name": name,
+                        "metrics": metrics,
+                        "summary": PerformanceAnalytics.get_summary_report(metrics)
+                    })
+                except Exception as e:
+                    print(f"策略 {name} 回测失败: {e}")
 
-    return {
-        "quant_data": combined_quant_data,
-        "technical_indicators": tech_indicators,
-        "sector_cons": state.get("sector_cons", []), # 保持原样传递
-        "messages": [f"数据分析师完成了对 {stock_code} 的量化、行业对比及主力资金动向分析。"]
-    }
+            # 按夏普比率排序
+            backtest_results = sorted(backtest_results, key=lambda x: x["metrics"].get("sharpe", 0), reverse=True)
+            
+            # 10. 组装结果
+            quant_data = {
+                "stock_code": stock_code,
+                "stock_name": stock_name,
+                "technical_indicators": tech_indicators,
+                "financials": financials,
+                "fund_flow": fund_flow,
+                "industry_comparison": industry_data,
+                "backtest_candidates": backtest_results # 传递候选策略集
+            }
+            
+            return {
+                "quant_data": quant_data,
+                "messages": [f"已完成 {stock_name} 的量化数据获取与多策略回测分析。"]
+            }
+            
+        except Exception as e:
+            import traceback
+            print(f"量化分析过程出错: {e}")
+            print(traceback.format_exc())
+            return {"error": f"量化分析失败: {str(e)}"}
+    else:
+        return {"error": "获取到的数据不足以进行量化分析"}

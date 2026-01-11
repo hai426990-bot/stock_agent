@@ -138,6 +138,24 @@ with st.sidebar:
                 except:
                     pass
 
+    with st.expander("📊 回测候选策略"):
+        state = st.session_state.workflow_state or {}
+        quant_data = state.get("quant_data", {})
+        candidates = quant_data.get("backtest_candidates", [])
+        if candidates:
+            st.write(f"**找到 {len(candidates)} 个候选策略**")
+            for i, cand in enumerate(candidates[:5]): # 显示前5个
+                metrics = cand.get('metrics', {})
+                with st.container():
+                    col1, col2, col3 = st.columns(3)
+                    col1.metric(f"{cand.get('name')}", f"{metrics.get('sharpe', 0):.2f}", "Sharpe")
+                    col2.metric("CAGR", f"{metrics.get('cagr', 0)*100:.2f}%")
+                    col3.metric("MDD", f"{metrics.get('max_drawdown', 0)*100:.2f}%")
+                    if i < len(candidates[:5]) - 1:
+                        st.divider()
+        else:
+            st.info("暂无可用的候选策略数据")
+
     with config_tab:
         # 获取默认模型，优先使用环境变量中的配置
         default_model = os.getenv("MODEL_NAME") or os.getenv("OPENAI_MODEL_NAME") or "gpt-4o"
@@ -237,6 +255,7 @@ def detect_available_model_st(api_key: str, api_base: str):
                 api_key=api_key,
                 base_url=api_base,
                 max_tokens=5,
+                top_p=0.95,
                 timeout=10
             )
             llm.invoke("hi")
@@ -260,6 +279,7 @@ def validate_model_st(config_params):
                 api_key=config_params["api_key"],
                 base_url=config_params["api_base"],
                 max_tokens=5,
+                top_p=0.95,
                 timeout=10
             )
             llm.invoke("hi")
@@ -290,6 +310,7 @@ def validate_model_st(config_params):
             api_key=config_params["api_key"], 
             base_url=config_params["api_base"], 
             max_tokens=5,
+            top_p=0.95,
             timeout=10
         )
         llm.invoke("hi")
@@ -418,7 +439,9 @@ def run_workflow(input_str, config_params):
             "news_items": [],
             "news_analysis": "",
             "sentiment_score": 0.0,
-            "quant_data": {},
+            "quant_data": {
+                "backtest_candidates": []
+            },
             "technical_indicators": {},
             "strategy_report": "",
             "risk_assessment": "",
@@ -443,7 +466,7 @@ def run_workflow(input_str, config_params):
                     elif node_name == "news_node":
                         st.write("🕵️‍♂️ **资讯侦察兵**: 深度检索 AkShare 专业资讯完成")
                     elif node_name == "quant_node":
-                        st.write("📊 **数据分析师**: 量化指标与资金流向计算完成")
+                        st.write("📊 **数据分析师**: 量化指标计算与多策略回测完成")
                     elif node_name == "strategy_node":
                         st.write("🧠 **策略主理人**: 正在综合研判并生成报告...")
                     elif node_name == "risk_node":
@@ -568,7 +591,29 @@ def display_results(state):
             mime="text/markdown"
         )
     
-    # 4. 展示原始数据底稿
+    # 4. 展示回测候选策略
+    with st.expander("📈 回测候选策略详情"):
+        quant_data = state.get("quant_data", {})
+        candidates = quant_data.get("backtest_candidates", [])
+        if candidates:
+            st.write(f"**回测系统在 STRATEGY_REGISTRY 中发现了 {len(candidates)} 个候选策略**")
+            for i, cand in enumerate(candidates):
+                metrics = cand.get('metrics', {})
+                with st.container():
+                    st.write(f"### {i+1}. {cand.get('name')}")
+                    col1, col2, col3, col4 = st.columns(4)
+                    col1.metric("Sharpe Ratio", f"{metrics.get('sharpe', 0):.2f}")
+                    col2.metric("CAGR (年化收益)", f"{metrics.get('cagr', 0)*100:.2f}%")
+                    col3.metric("Max Drawdown", f"{metrics.get('max_drawdown', 0)*100:.2f}%")
+                    col4.metric("Win Rate", f"{metrics.get('win_rate', 0)*100:.2f}%")
+                    
+                    st.write("**策略摘要:**")
+                    st.info(cand.get('summary', '暂无摘要'))
+                    if i < len(candidates) - 1:
+                        st.divider()
+        else:
+            st.info("暂无候选策略回测数据")
+
     with st.expander("📊 查看量化与财务数据底稿"):
         col_d1, col_d2 = st.columns(2)
         with col_d1:
@@ -580,7 +625,9 @@ def display_results(state):
             st.json(tech)
         with col_d2:
             st.write("**财务、行业对比与资金面**")
-            st.json(state.get("quant_data", {}))
+            # 排除 backtest_candidates 以免冗余
+            display_quant = {k: v for k, v in state.get("quant_data", {}).items() if k != "backtest_candidates"}
+            st.json(display_quant)
             
     with st.expander("📰 查看最新资讯原文"):
         news = state.get("news_items", [])

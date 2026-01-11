@@ -81,16 +81,19 @@ def risk_agent_node(state: AgentState):
         return {"risk_assessment": "Error: Invalid API Key", "revision_needed": False}
 
     # 深度思考模式配置
-    model_kwargs = {}
-    # NVIDIA/OpenAI 接口通常不需要显式设置 include_reasoning
+    extra_body = {}
+    if config.get("thinking_mode"):
+        # 针对部分 Provider (如 NVIDIA/DeepSeek) 的深度思考配置
+        extra_body = {"chat_template_kwargs": {"thinking": True}}
 
     llm = ChatOpenAI(
         model=model_name, 
         temperature=temperature, 
         max_tokens=max_tokens,
+        top_p=0.95,
         base_url=api_base,
         api_key=api_key,
-        model_kwargs=model_kwargs
+        extra_body=extra_body
     )
     
     parser = JsonOutputParser()
@@ -105,17 +108,26 @@ def risk_agent_node(state: AgentState):
     
     ### 审核报告内容
     ---
+    【投资策略报告】:
     {strategy_report}
+    
+    【底层量化回测数据】:
+    {backtest_candidates}
     ---
     
     ### 核心审核准则 (满足以下条件应予以通过)
     1. **逻辑闭环**: 结论是否建立在提供的数据基础上？（例如：如果利润下滑，报告是否解释了原因并提示了风险，而非盲目乐观）。
-    2. **风险对冲**: 报告在给出看多建议时，是否也同步列出了潜在的下行风险？
-    3. **无重大硬伤**: 是否存在数据张冠李戴、或者完全无视重大利空的情况？
+    2. **量化验证 (CRO 重点)**: 
+       - **多指标确认**: 审查策略逻辑是否使用了多个不相关的指标进行相互确认（例如趋势指标 MACD + 动量指标 RSI）。对于仅依赖单一指标的激进策略，应要求增加更多维度的量化验证。
+       - **过拟合审查**: 观察回测结果中的 Sharpe 和胜率是否高得不切实际（如 Sharpe > 4 或胜率 > 80%），若是，必须要求策略主理人增加样本外验证或风险警示。
+       - **数据泄漏检查**: 检查策略逻辑是否使用了“未来函数”（虽然引擎已规避，但仍需从策略逻辑描述中审查）。
+       - **回撤与风控**: 报告中提到的止损位是否与回测数据中的 Max Drawdown (MDD) 相匹配？如果 MDD 为 20% 但止损设在 5%，逻辑是否合理？
+    3. **风险对冲**: 报告在给出看多建议时，是否也同步列出了潜在的下行风险？
+    4. **无重大硬伤**: 是否存在数据张冠李戴、或者完全无视重大利空的情况？
     
     ### 审核结论准则
-    - **通过**: 逻辑基本自洽，风险提示清晰，结论有据可依。
-    - **驳回**: 存在严重的逻辑矛盾（如：数据全是利空却无理由看多）、刻意隐瞒已知的重大负面信息、或建议极端激进且无风险提示。
+    - **通过**: 逻辑基本自洽，风险提示清晰，结论有据可依，量化风险受控。
+    - **驳回**: 存在严重的逻辑矛盾、刻意隐瞒重大负面信息、建议极端激进且无风险提示、或量化回测表现出明显的过拟合迹象。
     
     ### 注意事项
     - **不要过于吹毛求疵**: 如果策略已经对负面数据做出了合理解释并提示了风险，即使你持不同观点，也应予以"通过"。
@@ -136,8 +148,12 @@ def risk_agent_node(state: AgentState):
     
     try:
         # 手动渲染 prompt 并调用 llm
+        quant_data = state.get("quant_data", {})
+        backtest_candidates = quant_data.get("backtest_candidates", [])
+        
         prompt_str = prompt.format(
             strategy_report=state["strategy_report"],
+            backtest_candidates=backtest_candidates,
             current_count=current_count + 1,
             current_date=current_date,
             format_instructions=parser.get_format_instructions()

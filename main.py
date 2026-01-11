@@ -110,6 +110,7 @@ def detect_available_model(api_key: str, api_base: str, force_redetect: bool = F
                 api_key=api_key,
                 base_url=api_base,
                 max_tokens=5,
+                top_p=0.95,
                 timeout=10
             )
             llm.invoke("hi")
@@ -155,6 +156,7 @@ def run_alpha_flow(input_str: str):
                 api_key=api_key,
                 base_url=api_base,
                 max_tokens=5,
+                top_p=0.95,
                 timeout=10
             )
             llm.invoke("hi")
@@ -205,6 +207,7 @@ def run_alpha_flow(input_str: str):
         "sentiment_score": 0.0,
         "quant_data": {},
         "technical_indicators": {},
+        "backtest_result": {},
         "strategy_report": "",
         "risk_assessment": "",
         "messages": [],
@@ -282,6 +285,24 @@ def run_alpha_flow(input_str: str):
         else:
             print("暂无缓存数据")
         
+        quant_data = final_state.get("quant_data", {})
+        candidates = quant_data.get("backtest_candidates", [])
+        if candidates:
+            print("\n" + "="*50)
+            print("📈 回测与策略候选集")
+            print("="*50)
+            for i, cand in enumerate(candidates[:3]): # 只打印前3个
+                print(f"[{i+1}] 策略: {cand.get('name')}")
+                metrics = cand.get('metrics', {})
+                print(f"    Sharpe: {metrics.get('sharpe', 0):.2f} | CAGR: {metrics.get('cagr', 0)*100:.2f}% | MDD: {metrics.get('max_drawdown', 0)*100:.2f}%")
+            if len(candidates) > 3:
+                print(f"    ... 还有 {len(candidates)-3} 个候选策略已保存到 persistence 层")
+        else:
+            print("\n" + "="*50)
+            print("📈 回测与策略筛选")
+            print("="*50)
+            print("暂无可用的候选策略结果")
+
         print("\n" + "="*50)
         print("📋 最终投资建议报告")
         print("="*50)

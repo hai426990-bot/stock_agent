@@ -128,16 +128,19 @@ def strategy_agent_node(state: AgentState):
         return {"strategy_report": "Error: Invalid API Key"}
 
     # 深度思考模式配置
-    model_kwargs = {}
-    # NVIDIA/OpenAI 接口通常不需要显式设置 include_reasoning
+    extra_body = {}
+    if config.get("thinking_mode"):
+        # 针对部分 Provider (如 NVIDIA/DeepSeek) 的深度思考配置
+        extra_body = {"chat_template_kwargs": {"thinking": True}}
 
     llm = ChatOpenAI(
         model=model_name, 
         temperature=temperature, 
         max_tokens=max_tokens,
+        top_p=0.95,
         base_url=api_base,
         api_key=api_key,
-        model_kwargs=model_kwargs
+        extra_body=extra_body
     )
 
     # 根据是否是板块调整角色和任务
@@ -162,9 +165,9 @@ def strategy_agent_node(state: AgentState):
             risk_feedback = f"""
         ### ⚠️ 修正请求 (来自风控官)
         你之前的报告被驳回了，理由如下：
-        **决策**: {decision}
-        **审核次数**: {review_count}
-        **驳回理由**: {reason}
+        决策: {decision}
+        审核次数: {review_count}
+        驳回理由: {reason}
         """
             
             # 基于具体的风控理由生成详细的修复清单
@@ -213,7 +216,7 @@ def strategy_agent_node(state: AgentState):
     
     ### 任务描述
     {task_description}
-    **注意：今天是 {current_date}。请确保报告的时效性以此日期为准。**
+    注意：今天是 {current_date}。请确保报告的时效性以此日期为准。
     
     {risk_feedback}
     {revision_checklist}
@@ -229,42 +232,46 @@ def strategy_agent_node(state: AgentState):
     
     【3. 技术面与资金流向】: 
     - 关键指标: {{tech_indicators}}
-    - (注：包含 MA 均线系统(5/10/20/60日)、MACD(12,26,9)、RSI(14日)、KDJ(9日)、BOLL 布林带(20日,2σ)、成交量比率及自动识别的技术形态)
+    - 候选策略回测集: {{backtest_candidates}}
+    - (注：包含多种量化策略的回测表现、参数及风险摘要。请分析这些策略在当前行情下的适用性，并给出情景化建议)
+    - 包含指标: MA 均线系统(5/10/20/60日)、MACD(12,26,9)、RSI(14日)、KDJ(9日)、BOLL 布林带(20日,2σ)、成交量比率及自动识别的技术形态
     - 重要：所有技术指标均已标注计算周期，请严格按照标注的周期参数进行解读，禁止随意更改周期参数
     
     {sector_cons_context}
     ---
     
     ### 撰写要求
-    1. **数据绝对真理原则**: 所有的技术指标均由本地精密计算得出。**严禁你进行任何数学推导或重新计算**。
-    2. **逻辑闭环**: 结论必须由提供的本地数据支撑。
-    3. **多维深度分析**:
-       - **资讯维度**: 结合近期行业政策、宏观环境，评估板块的赛道价值。
-       - **技术/资金维度**: 直接引用本地计算出的指标，解读板块的趋势强度或变盘点。
-       - **成分股分析 (仅限板块分析)**: 如果提供了成分股，分析权重股的表现对板块 ETF 的影响。
-    4. **严禁幻觉**: 
+    1. 数据绝对真理原则: 所有的技术指标均由本地精密计算得出。严禁你进行任何数学推导或重新计算。
+    2. 逻辑闭环: 结论必须由提供的本地数据支撑。
+    3. 多维深度分析:
+       - 资讯维度: 结合近期行业政策、宏观环境，评估板块的赛道价值。
+       - 技术/资金维度: 直接引用本地计算出的指标，解读板块的趋势强度或变盘点。
+       - 策略解释 (核心): 详细解读【候选策略回测集】中的策略表现。重点分析多指标组合策略（如 Trend+Momentum 或 MeanReversion+Volatility）的表现。分析为什么这些组合策略可能比单一指标策略更稳健，并解释它们如何通过指标间的相互确认来降低假信号风险。
+       - 成分股分析 (仅限板块分析): 如果提供了成分股，分析权重股的表现对板块 ETF 的影响。
+    4. 严禁幻觉: 
        - 如果某项数据缺失，请明确说明"无法评估"，禁止盲目猜测。
        - 财务数据（如营业总收入、ROE、净利润等）缺失时，必须在报告中标注"无法评估"。
        - 技术指标缺失时，必须说明"数据不足无法计算该指标"。
        - 资金流向或行业对比数据缺失时，必须说明"数据暂不可用"。
-    5. **双视角操作建议 (核心)**: 
-       - **针对【持仓者/已购 ETF 者】**: 必须给出具体的后续策略（如：继续持有、逢高减仓、定投坚持、或止损离场）。
-       - **针对【未持仓者/拟购 ETF 者】**: 必须给出具体的入场指引（如：当前可建仓、等待回调、分批定投、或观望）。
-    6. **修复清单回应 (重要)**: 
-       - **如果提供了修复清单，必须在报告中逐项回应风控官提出的具体问题**
-       - **针对每个修复项，明确说明"已修正"或"无法修正的原因"**
-       - **确保修正后的报告直接回应了风控官的关切点**
-       - **在报告开头增加"修正说明"部分，总结本次修正的内容**
-    7. **专业化输出**: 使用 Markdown 格式。
-    8. **合规性声明**: 在报告末尾必须包含以下声明："本报告仅供参考，不构成任何投资建议。投资者据此操作，风险自担。"
+    5. 双视角与情景化操作建议 (核心): 
+       - 针对【持仓者/已购 ETF 者】: 必须给出具体的后续策略（如：继续持有、逢高减仓、定投坚持、或止损离场）。
+       - 针对【未持仓者/拟购 ETF 者】: 必须给出具体的入场指引（如：当前可建仓、等待回调、分批定投、或观望）。
+       - 情景化建议: 基于回测表现最好的策略，给出不同市场情景下的应对方案（如：若突破某关键价位如何操作，若回撤到某比例如何止损）。
+    6. 修复清单回应 (重要): 
+       - 如果提供了修复清单，必须在报告中逐项回应风控官提出的具体问题
+       - 针对每个修复项，明确说明"已修正"或"无法修正的原因"
+       - 确保修正后的报告直接回应了风控官的关切点
+       - 在报告开头增加"修正说明"部分，总结本次修正的内容
+    7. 专业化输出: 使用 Markdown 格式。
+    8. 合规性声明: 在报告末尾必须包含以下声明："本报告仅供参考，不构成任何投资建议。投资者据此操作，风险自担。"
     
     ### 报告模板结构
-    - **一、核心评级与一句话总评**
-    - **二、板块/股票摘要数据表** (Markdown Table)
-    - **三、多维深度逻辑分析**
-    - **四、针对性操作策略 (分视角)**
-    - **五、潜在风险警示**
-    - **六、免责声明**
+    - 一、核心评级与一句话总评
+    - 二、板块/股票摘要数据表 (Markdown Table)
+    - 三、多维深度逻辑分析
+    - 四、针对性操作策略 (分视角)
+    - 五、潜在风险警示
+    - 六、免责声明
     """
     
     prompt = ChatPromptTemplate.from_template(prompt_template)
@@ -283,12 +290,20 @@ def strategy_agent_node(state: AgentState):
         if len(news_analysis) > 2000:
             news_analysis = news_analysis[:2000] + "..."
 
+        quant_data = state.get("quant_data", {})
+        backtest_candidates = quant_data.get("backtest_candidates", [])
+        
+        # 移除 quant_data 中的 backtest_candidates 以免在提示词中重复显示过多内容
+        # 如果 quant_data 本身也包含它，模板中 {{quant_data}} 会很大
+        display_quant_data = {k: v for k, v in quant_data.items() if k != "backtest_candidates"}
+
         chain = prompt | llm
         res = chain.invoke({
             "news_analysis": news_analysis,
             "sentiment_score": sentiment_score,
-            "quant_data": state.get("quant_data", {}),
+            "quant_data": display_quant_data,
             "tech_indicators": state.get("technical_indicators", {}),
+            "backtest_candidates": backtest_candidates,
             "sector_cons": state.get("sector_cons", [])[:10] if is_sector else []
         })
         

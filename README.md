@@ -1,95 +1,95 @@
-# 股票分析代理系统
+# AlphaFlow 股票分析与回测系统
 
-一个基于LangGraph和AI的智能股票分析系统，结合多种专业代理进行综合分析。
+AlphaFlow 是一个基于 LangGraph 和 LangChain 构建的股票分析系统。系统通过编排多个代理节点，整合了新闻资讯分析、技术指标计算、多策略回测以及风险审核流程，旨在为用户提供结构化的投资分析参考。
 
-## 目录
-- [项目介绍](#项目介绍)
-- [安装说明](#安装说明)
-- [使用说明](#使用说明)
-- [项目结构](#项目结构)
-- [贡献说明](#贡献说明)
-- [许可证信息](#许可证信息)
+---
 
-## 项目介绍
+## 核心功能
 
-股票分析代理系统是一个利用AI技术进行股票分析的智能系统。该项目使用LangGraph框架构建，集成了多个专业代理，包括：
+### 1. 多代理协作架构
+系统由四个主要代理节点组成，通过 LangGraph 进行工作流编排：
+- 资讯分析代理 (NewsAgent): 负责检索市场资讯，进行行业政策解析并计算情感评分。
+- 量化分析代理 (QuantAgent): 负责计算技术指标，识别 K 线形态，并执行量化回测。
+- 策略生成代理 (StrategyAgent): 综合资讯与量化数据，分析不同策略的表现并生成投资分析报告。
+- 风险审核代理 (RiskAgent): 负责审核报告的逻辑严密性，评估回测结果的可靠性。
 
-- 新闻代理：分析市场新闻和事件
-- 量化代理：进行技术指标分析
-- 风险代理：评估投资风险
-- 策略代理：制定投资策略
+### 2. 回测子系统
+系统包含一个五层架构的回测模块：
+- 数据层: 统一数据格式，支持 SHA-256 数据版本验证与 Parquet 本地缓存。
+- 策略层: 基于 Pydantic 进行参数校验，支持自定义策略扩展。
+- 引擎层: 提供向量化回测引擎，支持交易税费与滑点模拟。
+- 分析层: 计算夏普比率、年化收益率、最大回撤、胜率等绩效指标。
+- 持久化层: 记录回测历史数据，便于后续复盘。
 
-系统能够综合多方面信息，为用户提供全面的股票分析报告。
+### 3. 多指标组合测试
+系统支持多种指标组合的逻辑验证，包括但不限于：
+- 趋势与动量组合 (MACD + RSI)
+- 均值回归与波动率组合 (Bollinger Bands + RSI)
+- 成交量与趋势确认 (Moving Average + Volume)
 
-## 安装说明
+---
 
-1. 克隆项目到本地：
+## 快速开始
+
+### 1. 环境配置
 ```bash
 git clone https://github.com/your-username/stock_agent.git
 cd stock_agent
-```
-
-2. 创建虚拟环境（推荐）：
-```bash
 python -m venv venv
-source venv/bin/activate  # Linux/Mac
-# 或
-venv\Scripts\activate  # Windows
-```
-
-3. 安装依赖：
-```bash
+source venv/bin/activate  # Windows 使用 venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-4. 配置环境变量：
-```bash
-cp .env.example .env
-# 编辑 .env 文件，添加必要的API密钥
+### 2. API 密钥设置
+将 .env.example 重命名为 .env，并配置相关的 API 密钥：
+```text
+OPENAI_API_KEY=your_key_here
+OPENAI_API_BASE=https://api.your-provider.com/v1
 ```
 
-## 使用说明
+### 3. 启动方式
+- Web 界面 (Streamlit):
+  ```bash
+  streamlit run app.py
+  ```
+- 命令行界面 (CLI):
+  ```bash
+  python main.py
+  ```
 
-1. 运行主应用：
-```bash
-python main.py
-```
-
-2. 或运行Streamlit应用：
-```bash
-streamlit run app.py
-```
-
-3. 在应用中输入股票代码和分析需求，系统将自动调用各代理进行分析并生成报告。
+---
 
 ## 项目结构
 
-```
+```text
 stock_agent/
-├── app.py          # Streamlit Web应用
-├── graph.py        # LangGraph工作流定义
-├── main.py         # 主应用入口
-├── state.py        # 应用状态管理
-├── requirements.txt # 项目依赖
-├── agents/         # 各种专业代理
-│   ├── news_agent.py    # 新闻分析代理
-│   ├── quant_agent.py   # 量化分析代理
-│   ├── risk_agent.py    # 风险评估代理
-│   └── strategy_agent.py # 策略制定代理
-├── tools/          # 工具函数
-├── analysis_history/ # 分析历史记录
-└── test_cache.py   # 缓存测试文件
+├── agents/              # 代理节点逻辑实现
+│   ├── news_agent.py    # 资讯分析
+│   ├── quant_agent.py   # 量化与回测调度
+│   ├── strategy_agent.py # 报告生成
+│   └── risk_agent.py    # 逻辑审核
+├── backtest/            # 回测系统核心模块
+│   ├── data.py          # 数据管理
+│   ├── strategy.py      # 策略注册与定义
+│   ├── engine.py        # 回测计算引擎
+│   ├── analytics.py     # 绩效评估
+│   └── persistence.py   # 结果存储
+├── tools/               # 基础工具类
+│   └── stock_data.py    # 数据接口封装
+├── app.py               # Streamlit 界面入口
+├── graph.py             # 工作流拓扑定义
+└── main.py              # CLI 程序入口
 ```
 
-## 贡献说明
+---
 
-欢迎对本项目进行贡献！请遵循以下步骤：
+## 技术栈
+- 框架: LangGraph, LangChain
+- 数据源: AkShare
+- 数据处理: Pandas, NumPy
+- UI 框架: Streamlit
 
-1. Fork项目
-2. 创建功能分支
-3. 提交更改
-4. 发起Pull Request
+---
 
-## 许可证信息
-
-本项目使用MIT许可证。详情请参见LICENSE文件。
+## 许可证
+本项目采用 MIT 许可证。分析结果仅供参考，不构成投资建议。
