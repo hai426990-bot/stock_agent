@@ -17,20 +17,10 @@ def retry(max_retries=3, delay=1, backoff=2):
         def wrapper(*args, **kwargs):
             retries = 0
             current_delay = delay
-            last_exception = None
-
             while retries < max_retries:
                 try:
-                    result = func(*args, **kwargs)
-                    # 如果函数返回 None 且这可能是一个有效结果，需要特殊处理
-                    # 但通常 None 表示失败，所以这里我们继续重试
-                    if result is not None or func.__name__.startswith('get_board_'):
-                        return result
-                    else:
-                        # 对于某些函数，None 可能是有效结果，我们仍返回它
-                        return result
+                    return func(*args, **kwargs)
                 except Exception as e:
-                    last_exception = e
                     retries += 1
                     if retries == max_retries:
                         print(f"❌ {func.__name__} 达到最大重试次数: {e}")
@@ -199,34 +189,33 @@ def ttl_cache(ttl_seconds: int = 300):
     """
     def decorator(func: Callable) -> Callable:
         func_name = func.__name__
-
+        
         @wraps(func)
         def wrapper(*args, **kwargs):
             # 尝试从缓存获取
             cached_data, timestamp = _cache_instance.get(func_name, args, kwargs)
-
+            
             if cached_data is not None:
                 try:
                     cache_time = datetime.fromisoformat(timestamp)
                     if (datetime.now() - cache_time).total_seconds() < ttl_seconds:
-                        # 使用英文字符避免Windows控制台编码问题
-                        print(f"[CACHE HIT] {func_name} (updated at: {timestamp})")
+                        print(f"✅ {func_name} 使用缓存 (更新于: {timestamp})")
                         return cached_data
                 except Exception as e:
-                    print(f"[CACHE ERROR] Failed to parse cache time: {e}")
-
+                    print(f"⚠️ 缓存时间解析失败: {e}")
+            
             # 缓存未命中或已过期，调用原函数
             result = func(*args, **kwargs)
-
+            
             # 保存到缓存
             if result is not None:
                 _cache_instance.set(func_name, args, kwargs, result)
-
+            
             return result
-
+        
         # 添加获取最后更新时间的方法
         wrapper.get_last_updated = lambda *args, **kwargs: _cache_instance.get_last_updated(func_name, args, kwargs)
-
+        
         return wrapper
     return decorator
 
@@ -285,17 +274,12 @@ def get_stock_hist_data(stock_code: str, days: int = 150):
     try:
         # 获取足够的历史数据以支持指标计算
         df = ak.stock_zh_a_hist(symbol=stock_code, period="daily", adjust="qfq")
-        if df is not None and not df.empty:
-            # 确保日期列存在并转换为datetime
-            if '日期' in df.columns:
-                df['日期'] = pd.to_datetime(df['日期'])
-                # 排序确保日期递增
-                df = df.sort_values('日期')
-                # 仅截取最近的 N 天用于返回，但保留足够的历史记录供计算
-                return df.tail(days)
-            else:
-                print(f"⚠️ 历史数据中缺少日期列: {stock_code}")
-                return pd.DataFrame()
+        if not df.empty:
+            df['日期'] = pd.to_datetime(df['日期'])
+            # 排序确保日期递增
+            df = df.sort_values('日期')
+            # 仅截取最近的 N 天用于返回，但保留足够的历史记录供计算
+            return df.tail(days)
         return pd.DataFrame()
     except Exception as e:
         print(f"获取历史数据失败: {e}")
@@ -310,7 +294,7 @@ def get_stock_financial_indicator(stock_code: str):
     """
     try:
         df = ak.stock_financial_abstract_ths(symbol=stock_code)
-        if df is not None and not df.empty:
+        if not df.empty:
             # 同花顺接口返回的数据通常按年份升序排列，取最后一行即为最新数据
             return df.iloc[-1].to_dict()
         return {}
@@ -327,9 +311,9 @@ def get_stock_news(stock_code: str, with_sector: bool = True):
     """
     try:
         df = ak.stock_news_em(symbol=stock_code)
-
+        
         final_news = []
-        if df is not None and not df.empty:
+        if not df.empty:
             available_cols = df.columns.tolist()
             mapping = {
                 "新闻标题": ["新闻标题", "title", "标题"],
@@ -337,27 +321,27 @@ def get_stock_news(stock_code: str, with_sector: bool = True):
                 "新闻内容": ["新闻内容", "content", "内容"],
                 "文章链接": ["文章链接", "url", "link", "链接"]
             }
-
+            
             final_mapping = {}
             for key, possible_names in mapping.items():
                 for name in possible_names:
                     if name in available_cols:
                         final_mapping[key] = name
                         break
-
+            
             if "新闻标题" in final_mapping:
                 df_selected = df[list(final_mapping.values())].head(15)
                 df_selected.columns = list(final_mapping.keys())
                 final_news = df_selected.to_dict(orient="records")
-
+        
         # 兜底逻辑：如果个股新闻少于 5 条，补充行业新闻
         if with_sector and len(final_news) < 5:
             try:
                 # 获取行业
                 info_df = ak.stock_individual_info_em(symbol=stock_code)
-                if info_df is not None and not info_df.empty:
+                if not info_df.empty:
                     industry_row = info_df[info_df["item"] == "行业"]
-                    if industry_row is not None and not industry_row.empty:
+                    if not industry_row.empty:
                         industry_name = industry_row.iloc[0]["value"]
                         # 注意：此处调用 get_board_news 时必须设置 with_stock=False，防止无限递归
                         sector_news = get_board_news(industry_name, "industry", with_stock=False)
@@ -367,7 +351,7 @@ def get_stock_news(stock_code: str, with_sector: bool = True):
                         final_news.extend(sector_news[:5])
             except Exception as e:
                 print(f"获取个股关联行业新闻失败: {e}")
-
+                
         return final_news
     except Exception as e:
         print(f"获取新闻失败: {e}")

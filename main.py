@@ -29,7 +29,7 @@ def setup_utf8_encoding():
 
 setup_utf8_encoding()
 
-# 加载环境变量（覆盖系统环境变量以确保使用 .env 文件中的值）
+# 加载环境变量，优先使用 .env 配置文件 (override=True)
 load_dotenv(override=True)
 
 # 模型探测缓存文件路径
@@ -93,9 +93,12 @@ def detect_available_model(api_key: str, api_base: str, force_redetect: bool = F
     from langchain_openai import ChatOpenAI
     
     # 从环境变量获取支持的模型列表
-    supported_models_str = os.getenv("SUPPORTED_MODELS", "")
+    supported_models_str = os.getenv("SUPPORTED_MODELS") or os.getenv("OPENAI_MODEL") or ""
     if supported_models_str:
-        supported_models = [m.strip() for m in supported_models_str.split(",")]
+        if "," in supported_models_str:
+            supported_models = [m.strip() for m in supported_models_str.split(",")]
+        else:
+            supported_models = [supported_models_str.strip()]
     else:
         # 默认模型列表
         supported_models = ["gpt-4o", "gpt-4-turbo", "gpt-3.5-turbo", "mimo-v2-flash"]
@@ -110,6 +113,7 @@ def detect_available_model(api_key: str, api_base: str, force_redetect: bool = F
                 api_key=api_key,
                 base_url=api_base,
                 max_tokens=5,
+                top_p=0.95,
                 timeout=10
             )
             llm.invoke("hi")
@@ -133,18 +137,44 @@ def run_alpha_flow(input_str: str):
     """
     # 检查并获取 API Key
     api_key = os.getenv("OPENAI_API_KEY")
-    
-    # 支持多种环境变量命名方式
     api_base = os.getenv("OPENAI_API_BASE") or os.getenv("OPENAI_BASE_URL") or "https://api.openai.com/v1"
-    model_name = os.getenv("OPENAI_MODEL_NAME") or os.getenv("OPENAI_MODEL") or "gpt-4o"
+    # 优先获取用户在环境变量中显式指定的模型名称
+    model_name = os.getenv("MODEL_NAME") or os.getenv("OPENAI_MODEL_NAME") or os.getenv("OPENAI_MODEL")
 
     if not api_key or api_key == "your_openai_api_key":
         print("⚠️ 错误: 请在 .env 文件中配置有效的 OPENAI_API_KEY")
         return
 
-    # 模型自动探测和降级
+    # 模型可用性预检
     print(f"\n🧪 模型可用性预检...")
-    available_model = detect_available_model(api_key, api_base)
+    
+    # 如果环境变量已经指定了模型，先尝试使用该模型
+    available_model = None
+    if model_name:
+        print(f"  尝试使用环境变量指定的模型: {model_name}...")
+        from langchain_openai import ChatOpenAI
+        try:
+            llm_kwargs = {
+                "model": model_name,
+                "api_key": api_key,
+                "base_url": api_base,
+                "max_tokens": 5,
+                "top_p": 0.95,
+                "timeout": 10
+            }
+            # 默认开启深度思考探测 (如果模型支持)
+            llm_kwargs["extra_body"] = {"thinking": {"type": "enabled"}}
+            
+            llm = ChatOpenAI(**llm_kwargs)
+            llm.invoke("hi")
+            available_model = model_name
+            print(f"  ✅ 指定模型 {model_name} 可用")
+        except Exception as e:
+            print(f"  ❌ 指定模型 {model_name} 不可用，将尝试自动探测其他可用模型...")
+    
+    # 如果指定模型不可用或未指定，则进行自动探测
+    if not available_model:
+        available_model = detect_available_model(api_key, api_base)
     
     if not available_model:
         print("\n❌ 错误: 无法找到可用的模型")
@@ -176,6 +206,12 @@ def run_alpha_flow(input_str: str):
         print(f"✅ 已找到: {stock_name} ({stock_code})")
 
     # 初始化状态
+    backtest_lookback_days = int(os.getenv("BACKTEST_LOOKBACK_DAYS", "365"))
+    backtest_sector_days = int(os.getenv("BACKTEST_SECTOR_DAYS", "252"))
+    backtest_initial_cash = float(os.getenv("BACKTEST_INITIAL_CASH", "100000"))
+    backtest_commission = float(os.getenv("BACKTEST_COMMISSION", "0.0003"))
+    backtest_slippage = float(os.getenv("BACKTEST_SLIPPAGE", "0.001"))
+
     initial_state = {
         "stock_code": stock_code,
         "stock_name": stock_name,
@@ -184,6 +220,7 @@ def run_alpha_flow(input_str: str):
         "sentiment_score": 0.0,
         "quant_data": {},
         "technical_indicators": {},
+        "backtest_result": {},
         "strategy_report": "",
         "risk_assessment": "",
         "messages": [],
@@ -197,7 +234,13 @@ def run_alpha_flow(input_str: str):
             "api_base": api_base,
             "model_name": model_name,
             "temperature": 0.3,
-            "max_tokens": 8192
+            "max_tokens": 8196,
+            "thinking_mode": True,
+            "backtest_lookback_days": backtest_lookback_days,
+            "backtest_sector_days": backtest_sector_days,
+            "backtest_initial_cash": backtest_initial_cash,
+            "backtest_commission": backtest_commission,
+            "backtest_slippage": backtest_slippage,
         }
     }
     
@@ -206,39 +249,15 @@ def run_alpha_flow(input_str: str):
     
     print(f"\n🚀 AlphaFlow 启动: 正在分析股票 {stock_code} ({stock_name})...\n")
     
-    import threading
-    import itertools
-    import time
-    import sys
-
-    # 简单的加载动画
-    stop_loading = False
-    def loading_spinner(desc="正在分析中"):
-        spinner = itertools.cycle(['⣾', '⣽', '⣻', '⢿', '⡿', '⣟', '⣯', '⣷'])
-        while not stop_loading:
-            sys.stdout.write(f"\r{next(spinner)} {desc}...")
-            sys.stdout.flush()
-            time.sleep(0.1)
-        sys.stdout.write(f"\r✅ {desc} 完成!          \n")
-        sys.stdout.flush()
-
     # 运行
     try:
         # 使用 stream 模式以便在节点出错时及时发现
         final_state = initial_state
-        
-        # 启动加载动画
-        spinner_thread = threading.Thread(target=loading_spinner, args=("多智能体协作中",))
-        spinner_thread.daemon = True
-        spinner_thread.start()
-        
         for output in app.stream(initial_state):
             for node_name, state_update in output.items():
                 final_state.update(state_update)
                 # 检查是否有错误发生
                 if final_state.get("error"):
-                    stop_loading = True
-                    spinner_thread.join()
                     print(f"\n🛑 流程因节点错误中止: {final_state['error']}")
                     print("💡 常见错误解决方案:")
                     print("   - 模型不支持: 请在 .env 文件中配置 SUPPORTED_MODELS")
@@ -248,14 +267,9 @@ def run_alpha_flow(input_str: str):
                     return
                 # 检查是否有中断信号
                 if final_state.get("interrupted"):
-                    stop_loading = True
-                    spinner_thread.join()
                     print(f"\n⏸️ 流程被用户中断")
                     return
         
-        stop_loading = True
-        spinner_thread.join()
-
         # 输出最终结果
         print("\n" + "="*50)
         print("📦 数据缓存状态")
@@ -289,6 +303,24 @@ def run_alpha_flow(input_str: str):
         else:
             print("暂无缓存数据")
         
+        quant_data = final_state.get("quant_data", {})
+        candidates = quant_data.get("backtest_candidates", [])
+        if candidates:
+            print("\n" + "="*50)
+            print("📈 回测与策略候选集")
+            print("="*50)
+            for i, cand in enumerate(candidates[:3]): # 只打印前3个
+                print(f"[{i+1}] 策略: {cand.get('name')}")
+                metrics = cand.get('metrics', {})
+                print(f"    Sharpe: {metrics.get('sharpe', 0):.2f} | CAGR: {metrics.get('cagr', 0)*100:.2f}% | MDD: {metrics.get('max_drawdown', 0)*100:.2f}%")
+            if len(candidates) > 3:
+                print(f"    ... 还有 {len(candidates)-3} 个候选策略已保存到 persistence 层")
+        else:
+            print("\n" + "="*50)
+            print("📈 回测与策略筛选")
+            print("="*50)
+            print("暂无可用的候选策略结果")
+
         print("\n" + "="*50)
         print("📋 最终投资建议报告")
         print("="*50)

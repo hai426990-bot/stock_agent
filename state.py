@@ -15,6 +15,7 @@ class AgentState(TypedDict):
     sentiment_score: float # -1 to 1
     quant_data: Dict[str, Any]
     technical_indicators: Dict[str, Any]
+    backtest_result: Dict[str, Any]
     
     # 决策层
     strategy_report: str

@@ -2,10 +2,12 @@ import streamlit as st
 import pandas as pd
 import os
 import json
+import hashlib
+import shutil
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from graph import create_alpha_flow_graph
-from tools.stock_data import search_stock_code, get_stock_hist_data, search_board_info, get_board_hist_data, get_board_cons, get_cache_status
+from tools.stock_data import search_stock_code, get_stock_hist_data, search_board_info, get_board_hist_data, get_board_cons, get_cache_status, clear_akshare_cache
 import plotly.graph_objects as go
 from pathlib import Path
 
@@ -17,11 +19,137 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# 加载环境变量（覆盖系统环境变量以确保使用 .env 文件中的值）
+# 加载环境变量，优先使用 .env 配置文件 (override=True)
 load_dotenv(override=True)
 
 # 模型探测缓存文件路径
 MODEL_CACHE_FILE = Path(__file__).parent / ".model_cache.json"
+
+def inject_global_css():
+    st.markdown(
+        """
+        <style>
+        /* Typography */
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+        html, body, [class*="css"]  {
+          font-family: Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+        }
+
+        /* App background */
+        [data-testid="stAppViewContainer"]{
+          background: radial-gradient(900px 420px at 10% 0%, rgba(99,102,241,0.12), transparent 50%),
+                      radial-gradient(900px 420px at 90% 0%, rgba(16,185,129,0.10), transparent 55%),
+                      linear-gradient(180deg, #f8fafc 0%, #ffffff 45%, #ffffff 100%);
+        }
+
+        /* Markdown styling */
+        .stMarkdown h1, .stMarkdown h2, .stMarkdown h3{
+          letter-spacing: -0.02em;
+          color: #0f172a;
+        }
+        .stMarkdown h1{ font-weight: 800; }
+        .stMarkdown h2{ font-weight: 750; border-left: 4px solid #6366f1; padding-left: 10px; }
+        .stMarkdown h3{ font-weight: 700; }
+        .stMarkdown p, .stMarkdown li{
+          color: #0f172a;
+          line-height: 1.6;
+        }
+        .stMarkdown strong{
+          color: #111827;
+          background: linear-gradient(180deg, rgba(99,102,241,0.16), rgba(99,102,241,0.0));
+          padding: 0 2px;
+          border-radius: 4px;
+        }
+        .stMarkdown blockquote{
+          border-left: 4px solid #94a3b8;
+          padding: 10px 14px;
+          margin: 10px 0;
+          background: rgba(148,163,184,0.10);
+          border-radius: 10px;
+          color: #0f172a;
+        }
+        .stMarkdown code{
+          background: rgba(2,6,23,0.06);
+          padding: 2px 6px;
+          border-radius: 8px;
+        }
+        .stMarkdown table{
+          border-collapse: separate;
+          border-spacing: 0;
+          overflow: hidden;
+          border-radius: 14px;
+          border: 1px solid rgba(148,163,184,0.25);
+        }
+        .stMarkdown thead tr{
+          background: rgba(99,102,241,0.10);
+        }
+        .stMarkdown tbody tr:nth-child(even){
+          background: rgba(2,6,23,0.03);
+        }
+
+        /* Cards */
+        .af-card{
+          border: 1px solid rgba(148,163,184,0.25);
+          background: rgba(255,255,255,0.75);
+          backdrop-filter: blur(6px);
+          border-radius: 16px;
+          padding: 14px 14px;
+        }
+        .af-hero{
+          border: 1px solid rgba(148,163,184,0.25);
+          background: linear-gradient(135deg, rgba(99,102,241,0.18), rgba(16,185,129,0.10));
+          border-radius: 18px;
+          padding: 18px 18px;
+        }
+        .af-muted{ color: #475569; }
+        .af-title{ font-size: 26px; font-weight: 800; color:#0f172a; letter-spacing:-0.03em; margin:0; }
+        .af-subtitle{ margin: 4px 0 0 0; color:#334155; }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+def _badge(text: str, fg: str = "#0f172a", bg: str = "#e2e8f0") -> str:
+    return f"<span style='display:inline-block;padding:2px 8px;border-radius:999px;background:{bg};color:{fg};font-size:12px;line-height:18px;margin-right:6px'>{text}</span>"
+
+def _keyify(*parts: object) -> str:
+    raw = "|".join("" if p is None else str(p) for p in parts)
+    return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:12]
+
+def _strategy_icon(sharpe: float) -> str:
+    if sharpe >= 1.5:
+        return "🚀"
+    if sharpe >= 1.0:
+        return "⭐"
+    if sharpe >= 0.5:
+        return "✅"
+    if sharpe >= 0.0:
+        return "⚖️"
+    return "🧊"
+
+def _sharpe_badge(sharpe: float) -> str:
+    if sharpe >= 1.5:
+        return _badge(f"Sharpe {sharpe:.2f}", fg="#14532d", bg="#dcfce7")
+    if sharpe >= 1.0:
+        return _badge(f"Sharpe {sharpe:.2f}", fg="#0f766e", bg="#ccfbf1")
+    if sharpe >= 0.5:
+        return _badge(f"Sharpe {sharpe:.2f}", fg="#1d4ed8", bg="#dbeafe")
+    if sharpe >= 0.0:
+        return _badge(f"Sharpe {sharpe:.2f}", fg="#a16207", bg="#fef9c3")
+    return _badge(f"Sharpe {sharpe:.2f}", fg="#991b1b", bg="#fee2e2")
+
+def _mdd_badge(mdd: float) -> str:
+    # mdd is negative
+    if mdd >= -0.12:
+        return _badge(f"MDD {mdd*100:.1f}%", fg="#14532d", bg="#dcfce7")
+    if mdd >= -0.25:
+        return _badge(f"MDD {mdd*100:.1f}%", fg="#a16207", bg="#fef9c3")
+    return _badge(f"MDD {mdd*100:.1f}%", fg="#991b1b", bg="#fee2e2")
+
+def _fingerprint_secret(secret: str) -> str:
+    if not secret:
+        return "none"
+    return hashlib.sha256(secret.encode("utf-8")).hexdigest()[:8]
 
 def load_model_cache():
     """
@@ -135,16 +263,46 @@ with st.sidebar:
                             if st.button("❌", key=f"del_{h_file}", help="删除此记录", width="stretch"):
                                 delete_history(h_file)
                                 st.rerun()
-                except:
+                except Exception:
                     pass
 
+    with st.expander("📊 回测候选策略"):
+        state = st.session_state.workflow_state or {}
+        quant_data = state.get("quant_data", {})
+        candidates = quant_data.get("backtest_candidates", [])
+        if candidates:
+            st.write(f"**找到 {len(candidates)} 个候选策略**")
+            for i, cand in enumerate(candidates[:5]): # 显示前5个
+                metrics = cand.get('metrics', {})
+                with st.container():
+                    sharpe = float(metrics.get("sharpe", 0) or 0)
+                    mdd = float(metrics.get("max_drawdown", 0) or 0)
+                    title = cand.get("label") or cand.get("name")
+                    st.markdown(f"{_strategy_icon(sharpe)} <b>{i+1}. {title}</b><br>{_sharpe_badge(sharpe)}{_mdd_badge(mdd)}", unsafe_allow_html=True)
+
+                    col1, col2, col3 = st.columns(3)
+                    col1.metric("CAGR", f"{metrics.get('cagr', 0)*100:.2f}%")
+                    col2.metric("Win Rate", f"{metrics.get('win_rate', 0)*100:.2f}%")
+                    col3.metric("MDD", f"{metrics.get('max_drawdown', 0)*100:.2f}%")
+                    if i < len(candidates[:5]) - 1:
+                        st.divider()
+        else:
+            st.info("暂无可用的候选策略数据")
+
+    with st.expander("🗄️ 缓存状态"):
+        current = st.session_state.get("current_stock") or {}
+        stock_code = current.get("code")
+        st.json(get_cache_status(stock_code))
+
     with config_tab:
-        # 获取默认模型，统一使用 OPENAI_MODEL_NAME
-        default_model = os.getenv("OPENAI_MODEL_NAME") or os.getenv("OPENAI_MODEL") or "gpt-4o"
+        # 获取默认模型，优先使用环境变量中的配置
+        default_model = os.getenv("MODEL_NAME") or os.getenv("OPENAI_MODEL_NAME") or os.getenv("OPENAI_MODEL") or "gpt-4o"
         common_models = ["gpt-4o", "gpt-4-turbo", "gpt-3.5-turbo", "mimo-v2-flash"]
         
-        # 如果默认模型不在常用列表中，将其加入
-        if default_model not in common_models:
+        # 如果是 DeepSeek 等自定义模型，添加到列表中
+        if "deepseek" in default_model.lower() and "deepseek-v3" not in [m.lower() for m in common_models]:
+             common_models.insert(0, default_model)
+        elif default_model not in common_models:
             common_models.insert(0, default_model)
         
         selected_model = st.selectbox(
@@ -173,9 +331,46 @@ with st.sidebar:
             st.warning("⚠️ 请输入 API Key 以开始分析")
         
         temperature = st.slider("Temperature (随机性)", 0.0, 1.0, 0.3, 0.1)
-        max_tokens = st.select_slider("Max Tokens (最大长度)", options=[1024, 2048, 4096, 8192, 16384, 32768], value=8192)
+        max_tokens = st.select_slider("Max Tokens (最大长度)", options=[1024, 2048, 4096, 8192, 8196, 16384, 32768], value=8196)
         
         thinking_mode = st.toggle("开启深度思考模式 (Thinking Mode)", value=True)
+
+        st.divider()
+        st.subheader("📊 回测参数")
+        backtest_lookback_days = st.number_input("回测回溯天数", min_value=30, max_value=3650, value=365, step=30)
+        backtest_sector_days = st.number_input("板块回测天数", min_value=30, max_value=3650, value=252, step=30)
+        backtest_initial_cash = st.number_input("初始资金", min_value=1000.0, max_value=1e9, value=100000.0, step=10000.0)
+        backtest_commission = st.number_input("手续费率(单边)", min_value=0.0, max_value=0.02, value=0.0003, step=0.0001, format="%.4f")
+        backtest_slippage = st.number_input("滑点(单边)", min_value=0.0, max_value=0.05, value=0.001, step=0.0005, format="%.4f")
+
+        st.divider()
+        st.subheader("🧹 本地缓存")
+        if st.button("清理本地缓存（不影响历史报告）", help="会清理 AkShare/模型探测/回测缓存，并刷新 Streamlit cache"):
+            try:
+                clear_akshare_cache(ttl_seconds=0)
+            except Exception:
+                pass
+
+            for file_path in [Path(".akshare_cache.json"), MODEL_CACHE_FILE]:
+                try:
+                    if file_path.exists():
+                        file_path.unlink()
+                except Exception:
+                    pass
+
+            for dir_path in [Path(".backtest_cache"), Path(".backtest_results")]:
+                try:
+                    if dir_path.exists():
+                        shutil.rmtree(dir_path, ignore_errors=True)
+                except Exception:
+                    pass
+
+            try:
+                st.cache_data.clear()
+            except Exception:
+                pass
+
+            st.success("已清理本地缓存")
         
         if st.button("🗑️ 清除当前对话"):
             st.session_state.messages = []
@@ -221,9 +416,12 @@ def detect_available_model_st(api_key: str, api_base: str):
     from langchain_openai import ChatOpenAI
     
     # 从环境变量获取支持的模型列表
-    supported_models_str = os.getenv("SUPPORTED_MODELS", "")
+    supported_models_str = os.getenv("SUPPORTED_MODELS") or os.getenv("OPENAI_MODEL") or ""
     if supported_models_str:
-        supported_models = [m.strip() for m in supported_models_str.split(",")]
+        if "," in supported_models_str:
+            supported_models = [m.strip() for m in supported_models_str.split(",")]
+        else:
+            supported_models = [supported_models_str.strip()]
     else:
         # 默认模型列表
         supported_models = ["gpt-4o", "gpt-4-turbo", "gpt-3.5-turbo", "mimo-v2-flash"]
@@ -235,6 +433,7 @@ def detect_available_model_st(api_key: str, api_base: str):
                 api_key=api_key,
                 base_url=api_base,
                 max_tokens=5,
+                top_p=0.95,
                 timeout=10
             )
             llm.invoke("hi")
@@ -249,32 +448,31 @@ def validate_model_st(config_params):
     from langchain_openai import ChatOpenAI
     import hashlib
     
-    # 首先尝试从持久化缓存加载
-    cached_model = load_model_cache()
-    if cached_model:
-        # 验证缓存的模型是否仍然可用
+    # 1. 优先尝试用户当前选择的模型
+    target_model = config_params.get("model_name")
+    if target_model:
         try:
-            llm = ChatOpenAI(
-                model=cached_model,
-                api_key=config_params["api_key"],
-                base_url=config_params["api_base"],
-                max_tokens=5,
-                timeout=10
-            )
+            llm_kwargs = {
+                "model": target_model,
+                "api_key": config_params["api_key"],
+                "base_url": config_params["api_base"],
+                "max_tokens": 5,
+                "top_p": 0.95,
+                "timeout": 10
+            }
+            if config_params.get("thinking_mode"):
+                llm_kwargs["extra_body"] = {"thinking": {"type": "enabled"}}
+                
+            llm = ChatOpenAI(**llm_kwargs)
             llm.invoke("hi")
-            st.info(f"📦 使用模型探测缓存: {cached_model}")
-            return True, "", cached_model
+            return True, "", target_model
         except Exception as e:
-            # 缓存的模型不可用，清除缓存并继续探测
-            try:
-                if MODEL_CACHE_FILE.exists():
-                    MODEL_CACHE_FILE.unlink()
-            except:
-                pass
-    
-    # 生成缓存键
+            st.warning(f"⚠️ 选择的模型 {target_model} 验证失败，正在尝试缓存或自动探测...")
+
+    # 2. 尝试从持久化缓存加载
+    cached_model = load_model_cache()
     cache_key = hashlib.md5(
-        f"{config_params['api_base']}_{config_params['model_name']}_{config_params['api_key']}".encode()
+        f"{config_params['api_base']}_{config_params['model_name']}_{_fingerprint_secret(config_params.get('api_key'))}_{config_params.get('thinking_mode')}".encode()
     ).hexdigest()
     
     # 检查 session 缓存
@@ -289,13 +487,18 @@ def validate_model_st(config_params):
     
     # 执行验证
     try:
-        llm = ChatOpenAI(
-            model=config_params["model_name"], 
-            api_key=config_params["api_key"], 
-            base_url=config_params["api_base"], 
-            max_tokens=5,
-            timeout=10
-        )
+        llm_kwargs = {
+            "model": config_params["model_name"], 
+            "api_key": config_params["api_key"], 
+            "base_url": config_params["api_base"], 
+            "max_tokens": 5,
+            "top_p": 0.95,
+            "timeout": 10
+        }
+        if config_params.get("thinking_mode"):
+            llm_kwargs["extra_body"] = {"thinking": {"type": "enabled"}}
+            
+        llm = ChatOpenAI(**llm_kwargs)
         llm.invoke("hi")
         result = (True, "", config_params["model_name"])
         
@@ -422,7 +625,9 @@ def run_workflow(input_str, config_params):
             "news_items": [],
             "news_analysis": "",
             "sentiment_score": 0.0,
-            "quant_data": {},
+            "quant_data": {
+                "backtest_candidates": []
+            },
             "technical_indicators": {},
             "strategy_report": "",
             "risk_assessment": "",
@@ -447,7 +652,7 @@ def run_workflow(input_str, config_params):
                     elif node_name == "news_node":
                         st.write("🕵️‍♂️ **资讯侦察兵**: 深度检索 AkShare 专业资讯完成")
                     elif node_name == "quant_node":
-                        st.write("📊 **数据分析师**: 量化指标与资金流向计算完成")
+                        st.write("📊 **数据分析师**: 量化指标计算与多策略回测完成")
                     elif node_name == "strategy_node":
                         st.write("🧠 **策略主理人**: 正在综合研判并生成报告...")
                     elif node_name == "risk_node":
@@ -469,6 +674,7 @@ def run_workflow(input_str, config_params):
                     st.markdown(solution)
 
 def display_results(state):
+    inject_global_css()
     # 将报告加入消息历史
     report = state.get("strategy_report", "未生成报告")
     risk = state.get("risk_assessment", "未进行审核")
@@ -476,6 +682,29 @@ def display_results(state):
     stock_code = state.get("stock_code")
     stock_name = state.get("stock_name")
     is_sector = state.get("is_sector", False)
+    sentiment = float(state.get("sentiment_score", 0.0) or 0.0)
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    # Hero header
+    type_str = "板块" if is_sector else "股票"
+    st.markdown(
+        f"""
+        <div class="af-hero">
+          <div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:flex-end">
+            <div>
+              <div class="af-title">AlphaFlow 报告 · {stock_name} ({stock_code})</div>
+              <div class="af-subtitle">{type_str} · 生成时间 {now_str}</div>
+            </div>
+            <div style="text-align:right">
+              {_badge('资讯情绪', fg='#0f172a', bg='#e2e8f0')}
+              {_badge(f'{sentiment:+.2f}', fg=('#14532d' if sentiment>0.15 else '#991b1b' if sentiment<-0.15 else '#0f172a'),
+                     bg=('#dcfce7' if sentiment>0.15 else '#fee2e2' if sentiment<-0.15 else '#e2e8f0'))}
+            </div>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
     
     # 0. 展示缓存状态
     cache_status = get_cache_status(stock_code)
@@ -490,7 +719,6 @@ def display_results(state):
                     last_updated = source_info.get("last_updated")
                     if last_updated:
                         try:
-                            from datetime import datetime
                             dt = datetime.fromisoformat(last_updated)
                             time_str = dt.strftime("%Y-%m-%d %H:%M:%S")
                             st.write(f"- **{source_name}**: {time_str}")
@@ -517,7 +745,7 @@ def display_results(state):
                             close=df['收盘'],
                             name='K线')])
             fig.update_layout(xaxis_rangeslider_visible=False, height=400, margin=dict(l=20, r=20, t=20, b=20))
-            st.plotly_chart(fig, width="stretch")
+            st.plotly_chart(fig, width="stretch", key=f"kline_{stock_code}")
     except Exception as e:
         st.warning(f"无法加载 K 线图: {e}")
 
@@ -527,12 +755,7 @@ def display_results(state):
             cons_df = pd.DataFrame(state["sector_cons"])
             st.dataframe(cons_df, width="stretch")
 
-    # 3. 展示思考过程 (如果有且开启了思考模式)
-    if reasonings and state.get("config", {}).get("thinking_mode", True):
-        with st.expander("🧠 查看 AI 深度思考过程"):
-            for r in reasonings:
-                st.write(f"**{r['agent']}**: ")
-                st.info(r['content'])
+    # 3. 展示思考过程移至 Tabs
     
     # 3. 展示分析结论与下载按钮
     
@@ -543,7 +766,7 @@ def display_results(state):
         review_count = risk.get("review_count", 0)
         review_date = risk.get("review_date", "")
         
-        risk_text = f"### �️ 风控意见\n\n【决策: {decision}】\n【审核次数: {review_count}】"
+        risk_text = f"### 🛡️ 风控意见\n\n【决策: {decision}】\n【审核次数: {review_count}】"
         if review_date:
             risk_text += f"\n【审核日期: {review_date}】"
         risk_text += f"\n\n{reason}"
@@ -561,18 +784,135 @@ def display_results(state):
     
     full_content = f"### 📋 投资建议报告\n{report}\n\n---\n{risk_text}"
     
-    col1, col2 = st.columns([0.8, 0.2])
-    with col1:
-        st.markdown(full_content)
-    with col2:
+    # KPI row (derived from best backtest candidate)
+    quant_data = state.get("quant_data", {})
+    candidates = quant_data.get("backtest_candidates", []) or []
+    top = candidates[0] if candidates else {}
+    top_metrics = (top.get("metrics") or {}) if isinstance(top, dict) else {}
+    top_sharpe = float(top_metrics.get("sharpe", 0) or 0)
+    top_cagr = float(top_metrics.get("cagr", 0) or 0)
+    top_mdd = float(top_metrics.get("max_drawdown", 0) or 0)
+    top_turnover = float(top_metrics.get("turnover", 0) or 0)
+
+    k1, k2, k3, k4 = st.columns(4)
+    with k1:
+        st.markdown(f"<div class='af-card'><div class='af-muted'>⭐ 最佳 Sharpe</div><div style='font-size:22px;font-weight:800'>{top_sharpe:.2f}</div></div>", unsafe_allow_html=True)
+    with k2:
+        st.markdown(f"<div class='af-card'><div class='af-muted'>📈 最佳 CAGR</div><div style='font-size:22px;font-weight:800'>{top_cagr*100:.2f}%</div></div>", unsafe_allow_html=True)
+    with k3:
+        st.markdown(f"<div class='af-card'><div class='af-muted'>🧯 最佳 MDD</div><div style='font-size:22px;font-weight:800'>{top_mdd*100:.2f}%</div></div>", unsafe_allow_html=True)
+    with k4:
+        st.markdown(f"<div class='af-card'><div class='af-muted'>🔁 换手 (Turnover)</div><div style='font-size:22px;font-weight:800'>{top_turnover:.3f}</div></div>", unsafe_allow_html=True)
+
+    tabs = st.tabs(["🧾 报告正文", "🛡️ 风控结论", "📈 回测策略", "🧠 思考过程"])
+
+    with tabs[0]:
+        st.markdown("<div class='af-card'>", unsafe_allow_html=True)
+        st.markdown("## 🧾 投资建议报告（结构化正文）")
+        st.markdown(report)
+        st.markdown("</div>", unsafe_allow_html=True)
         st.download_button(
-            label="📥 下载报告",
+            label="📥 下载报告（Markdown）",
             data=full_content,
             file_name=f"{stock_name}_{stock_code}_投资建议.md",
-            mime="text/markdown"
+            mime="text/markdown",
         )
+
+    with tabs[1]:
+        st.markdown("<div class='af-card'>", unsafe_allow_html=True)
+        st.markdown("## 🛡️ 风控结论")
+        if isinstance(risk, dict):
+            decision = risk.get("decision", "未知")
+            reason = risk.get("reason", "未提供详细理由")
+            badge = _badge(decision, fg=("#14532d" if "通过" in decision else "#991b1b"), bg=("#dcfce7" if "通过" in decision else "#fee2e2"))
+            st.markdown(f"{badge}", unsafe_allow_html=True)
+            st.markdown(reason)
+        else:
+            st.markdown(str(risk))
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    with tabs[2]:
+        st.info("下方“📈 回测候选策略详情”包含完整回测展示（Top3 曲线、徽章、参数与指标）。")
+
+    with tabs[3]:
+        st.markdown("<div class='af-card'>", unsafe_allow_html=True)
+        st.markdown("## 🧠 AI 深度思考过程")
+        if reasonings and state.get("config", {}).get("thinking_mode", True):
+            for r in reasonings:
+                st.markdown(f"{_badge(r.get('agent','Agent'), fg='#0f172a', bg='#e2e8f0')}", unsafe_allow_html=True)
+                st.info(r.get("content", ""))
+        else:
+            st.info("未开启或未返回思考过程。")
+        st.markdown("</div>", unsafe_allow_html=True)
     
-    # 4. 展示原始数据底稿
+    # 4. 展示回测候选策略
+    with st.expander("📈 回测候选策略详情"):
+        quant_data = state.get("quant_data", {})
+        candidates = quant_data.get("backtest_candidates", [])
+        if candidates:
+            st.write(f"**回测系统生成了 {len(candidates)} 个策略候选（含不同参数组合）**")
+
+            top = candidates[:3]
+            if top:
+                tabs = st.tabs([f"{_strategy_icon(float(c.get('metrics', {}).get('sharpe', 0) or 0))} Top {i+1}" for i, c in enumerate(top)])
+                for i, (tab, cand) in enumerate(zip(tabs, top), start=1):
+                    with tab:
+                        metrics = cand.get("metrics", {})
+                        sharpe = float(metrics.get("sharpe", 0) or 0)
+                        mdd = float(metrics.get("max_drawdown", 0) or 0)
+                        title = cand.get("label") or cand.get("name")
+                        st.markdown(f"### {i}. {title}<br>{_sharpe_badge(sharpe)}{_mdd_badge(mdd)}", unsafe_allow_html=True)
+
+                        col1, col2, col3, col4 = st.columns(4)
+                        col1.metric("Sharpe", f"{sharpe:.2f}")
+                        col2.metric("CAGR", f"{metrics.get('cagr', 0)*100:.2f}%")
+                        col3.metric("MDD", f"{mdd*100:.2f}%")
+                        col4.metric("Win Rate", f"{metrics.get('win_rate', 0)*100:.2f}%")
+
+                        curve = cand.get("curve") or []
+                        if curve:
+                            cdf = pd.DataFrame(curve)
+                            if "dt" in cdf.columns:
+                                cdf["dt"] = pd.to_datetime(cdf["dt"], errors="coerce")
+                            fig = go.Figure()
+                            fig.add_trace(go.Scatter(x=cdf["dt"], y=cdf["equity"], mode="lines", name="Equity"))
+                            fig.update_layout(height=260, margin=dict(l=10, r=10, t=10, b=10))
+                            st.plotly_chart(fig, width="stretch", key=f"equity_top_{i}_{_keyify(title, sharpe, mdd)}")
+
+                        with st.expander("📌 策略摘要"):
+                            st.markdown(cand.get("summary", "暂无摘要"))
+
+            st.divider()
+            for i, cand in enumerate(candidates, start=1):
+                metrics = cand.get("metrics", {})
+                sharpe = float(metrics.get("sharpe", 0) or 0)
+                mdd = float(metrics.get("max_drawdown", 0) or 0)
+                title = cand.get("label") or cand.get("name")
+                st.markdown(f"{_strategy_icon(sharpe)} <b>{i}. {title}</b> {_sharpe_badge(sharpe)}{_mdd_badge(mdd)}", unsafe_allow_html=True)
+
+                col1, col2, col3, col4, col5 = st.columns(5)
+                col1.metric("CAGR", f"{metrics.get('cagr', 0)*100:.2f}%")
+                col2.metric("Win", f"{metrics.get('win_rate', 0)*100:.1f}%")
+                col3.metric("Trades", f"{int(metrics.get('trade_count', 0) or 0)}")
+                col4.metric("Turnover", f"{metrics.get('turnover', 0):.3f}")
+                col5.metric("Vol", f"{metrics.get('volatility', 0)*100:.1f}%")
+
+                with st.expander("📝 详情"):
+                    if cand.get("params"):
+                        st.markdown(_badge("Params", fg="#0f172a", bg="#e2e8f0") + f"<code>{cand.get('params')}</code>", unsafe_allow_html=True)
+                    st.info(cand.get("summary", "暂无摘要"))
+                    curve = cand.get("curve") or []
+                    if curve:
+                        cdf = pd.DataFrame(curve)
+                        if "dt" in cdf.columns:
+                            cdf["dt"] = pd.to_datetime(cdf["dt"], errors="coerce")
+                        fig = go.Figure()
+                        fig.add_trace(go.Scatter(x=cdf["dt"], y=cdf["equity"], mode="lines", name="Equity"))
+                        fig.update_layout(height=240, margin=dict(l=10, r=10, t=10, b=10))
+                        st.plotly_chart(fig, width="stretch", key=f"equity_{i}_{_keyify(title, sharpe, mdd)}")
+        else:
+            st.info("暂无候选策略回测数据")
+
     with st.expander("📊 查看量化与财务数据底稿"):
         col_d1, col_d2 = st.columns(2)
         with col_d1:
@@ -584,7 +924,9 @@ def display_results(state):
             st.json(tech)
         with col_d2:
             st.write("**财务、行业对比与资金面**")
-            st.json(state.get("quant_data", {}))
+            # 排除 backtest_candidates 以免冗余
+            display_quant = {k: v for k, v in state.get("quant_data", {}).items() if k != "backtest_candidates"}
+            st.json(display_quant)
             
     with st.expander("📰 查看最新资讯原文"):
         news = state.get("news_items", [])
@@ -613,14 +955,18 @@ if prompt := st.chat_input("请输入股票代码或名称 (如: 贵州茅台)",
     # 构造配置参数
     config_params = {
         "model_name": model_to_use,
-        "api_base": api_base,
+        "api_base": api_base if api_base else (os.getenv("OPENAI_API_BASE") or os.getenv("OPENAI_BASE_URL") or "https://api.openai.com/v1"),
         "api_key": api_key if api_key else os.getenv("OPENAI_API_KEY"),
         "temperature": temperature,
         "max_tokens": max_tokens,
-        "thinking_mode": thinking_mode
+        "thinking_mode": thinking_mode,
+        "backtest_lookback_days": backtest_lookback_days,
+        "backtest_sector_days": backtest_sector_days,
+        "backtest_initial_cash": backtest_initial_cash,
+        "backtest_commission": backtest_commission,
+        "backtest_slippage": backtest_slippage,
     }
     run_workflow(prompt, config_params)
 
 if not api_key:
     st.info("💡 请在侧边栏填写 API Key 后开始分析。")
-
