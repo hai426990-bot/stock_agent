@@ -206,12 +206,6 @@ def run_alpha_flow(input_str: str):
         print(f"✅ 已找到: {stock_name} ({stock_code})")
 
     # 初始化状态
-    backtest_lookback_days = int(os.getenv("BACKTEST_LOOKBACK_DAYS", "365"))
-    backtest_sector_days = int(os.getenv("BACKTEST_SECTOR_DAYS", "252"))
-    backtest_initial_cash = float(os.getenv("BACKTEST_INITIAL_CASH", "100000"))
-    backtest_commission = float(os.getenv("BACKTEST_COMMISSION", "0.0003"))
-    backtest_slippage = float(os.getenv("BACKTEST_SLIPPAGE", "0.001"))
-
     initial_state = {
         "stock_code": stock_code,
         "stock_name": stock_name,
@@ -235,12 +229,7 @@ def run_alpha_flow(input_str: str):
             "model_name": model_name,
             "temperature": 0.3,
             "max_tokens": 8196,
-            "thinking_mode": True,
-            "backtest_lookback_days": backtest_lookback_days,
-            "backtest_sector_days": backtest_sector_days,
-            "backtest_initial_cash": backtest_initial_cash,
-            "backtest_commission": backtest_commission,
-            "backtest_slippage": backtest_slippage,
+            "thinking_mode": True
         }
     }
     
