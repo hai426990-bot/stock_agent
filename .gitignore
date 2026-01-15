@@ -18,12 +18,18 @@ venv.bak/
 # Analysis history
 analysis_history/
 
-# Caches
-.akshare_cache.json
+# Local caches / outputs
 .model_cache.json
+.backtest_cache/
+.backtest_results/
 
 # IDE
 .vscode/
 .idea/
 *.swp
 *.swo
+.akshare_cache.json
+agents/__init__.py
+
+# Codex
+.codex_write_test.txt

@@ -1,7 +1,20 @@
 import pandas as pd
 import numpy as np
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from .strategy import BaseStrategy
+
+class TradeSignal:
+    def __init__(self, date, signal_type: str, price: float):
+        self.date = date
+        self.signal_type = signal_type  # "BUY" or "SELL"
+        self.price = price
+    
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "date": str(self.date) if hasattr(self.date, 'isoformat') else str(self.date),
+            "type": self.signal_type,
+            "price": round(self.price, 4)
+        }
 
 class VectorizedEngine:
     """
@@ -60,3 +73,27 @@ class VectorizedEngine:
         results["drawdown"] = (equity_curve / equity_curve.cummax()) - 1
         
         return results
+    
+    def extract_trade_signals(self, results: pd.DataFrame) -> List[TradeSignal]:
+        """
+        Extract buy and sell signals from backtest results.
+        Returns a list of TradeSignal objects.
+        """
+        signals = []
+        if results.empty or "position" not in results.columns:
+            return signals
+        
+        position = results["position"]
+        prices = results["close"]
+        dates = results["dt"]
+        
+        for i in range(1, len(position)):
+            prev_pos = position.iloc[i-1]
+            curr_pos = position.iloc[i]
+            
+            if curr_pos > prev_pos:  # Buy signal
+                signals.append(TradeSignal(dates.iloc[i], "BUY", prices.iloc[i]))
+            elif curr_pos < prev_pos:  # Sell signal
+                signals.append(TradeSignal(dates.iloc[i], "SELL", prices.iloc[i]))
+        
+        return signals

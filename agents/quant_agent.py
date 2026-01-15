@@ -4,6 +4,8 @@ import pandas as pd
 import hashlib
 from datetime import datetime, timedelta
 import numpy as np
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import time
 from backtest.data import DataManager
 from backtest.strategy import STRATEGY_REGISTRY
 from backtest.engine import VectorizedEngine
@@ -31,6 +33,80 @@ def _format_params(params: dict) -> str:
             parts.append(f"{key}={value}")
     return ", ".join(parts)
 
+def _fetch_financials(stock_code):
+    """并行获取财务指标"""
+    try:
+        result = get_stock_financial_indicator(stock_code)
+        if not result or "error" in result:
+            return {
+                "warning": "财务指标数据暂不可用",
+                "数据状态": "缺失",
+                "建议": "建议人工复核财务数据"
+            }
+        return result
+    except Exception as e:
+        return {
+            "warning": f"获取财务指标失败: {str(e)[:50]}",
+            "数据状态": "异常",
+            "建议": "建议人工复核财务数据"
+        }
+
+def _fetch_fund_flow(stock_code):
+    """并行获取资金流向"""
+    try:
+        result = get_stock_fund_flow(stock_code)
+        if not result or "error" in result:
+            return {
+                "代码": stock_code,
+                "warning": "资金流向数据暂不可用",
+                "数据状态": "缺失",
+                "建议": "建议人工复核资金流向数据"
+            }
+        return result
+    except Exception as e:
+        return {
+            "代码": stock_code,
+            "warning": f"获取资金流向失败: {str(e)[:50]}",
+            "数据状态": "异常",
+            "建议": "建议人工复核资金流向数据"
+        }
+
+def _fetch_industry_data(stock_code):
+    """并行获取行业对比数据"""
+    try:
+        result = get_stock_industry_comparison(stock_code)
+        if not result or "error" in result:
+            return {
+                "warning": "行业对比数据暂不可用",
+                "数据状态": "缺失",
+                "建议": "建议人工复核行业对比数据"
+            }
+        return result
+    except Exception as e:
+        return {
+            "warning": f"获取行业数据失败: {str(e)[:50]}",
+            "数据状态": "异常",
+            "建议": "建议人工复核行业对比数据"
+        }
+
+def _fetch_valuation_history(stock_code):
+    """并行获取估值历史"""
+    from tools.stock_data import get_stock_valuation_history
+    try:
+        return get_stock_valuation_history(stock_code)
+    except Exception as e:
+        print(f"获取估值历史失败: {e}")
+        return {}
+
+def _fetch_market_sentiment():
+    """并行获取市场情绪"""
+    from tools.stock_data import get_market_sentiment
+    try:
+        return get_market_sentiment()
+    except Exception as e:
+        print(f"获取市场情绪失败: {e}")
+        return {}
+
 def _sample_equity_curve(results: pd.DataFrame, max_points: int = 120) -> list:
     if results is None or results.empty or "dt" not in results.columns or "equity" not in results.columns:
         return []
@@ -52,7 +128,7 @@ def quant_agent_node(state: AgentState):
     
     # 检查是否有错误或中断信号
     if state.get("error") or state.get("interrupted"):
-        return {"messages": []}
+        return {"messages": [], "consecutive_failures": state.get("consecutive_failures", 0)}
     
     print(f"--- 📊 数据分析师: 正在分析 {stock_name}({stock_code}) 的量化数据 ---")
     
@@ -77,7 +153,7 @@ def quant_agent_node(state: AgentState):
         
         # 检查是否有错误或中断信号
         if state.get("error") or state.get("interrupted"):
-            return {"messages": []}
+            return {"messages": [], "consecutive_failures": state.get("consecutive_failures", 0)}
     except Exception as e:
         print(f"获取历史数据失败: {e}")
         df = pd.DataFrame()
@@ -86,63 +162,45 @@ def quant_agent_node(state: AgentState):
     financials = {}
     fund_flow = {}
     industry_data = {}
+    valuation_history = {}
+    market_sentiment = {}
+    
+    # 使用多线程并行获取数据
+    print(f"⚡ 开始并行获取数据...")
+    start_time = time.time()
+    
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        # 提交所有数据获取任务
+        futures = {}
+        
+        # 市场情绪（无论个股还是板块都需要）
+        futures['market_sentiment'] = executor.submit(_fetch_market_sentiment)
+        
+        if not is_sector:
+            # 个股数据获取任务
+            futures['financials'] = executor.submit(_fetch_financials, stock_code)
+            futures['fund_flow'] = executor.submit(_fetch_fund_flow, stock_code)
+            futures['industry_data'] = executor.submit(_fetch_industry_data, stock_code)
+            futures['valuation_history'] = executor.submit(_fetch_valuation_history, stock_code)
+        
+        # 等待所有任务完成
+        for future in as_completed(futures.values()):
+            try:
+                result = future.result()
+            except Exception as e:
+                print(f"⚠️ 并行任务失败: {e}")
+    
+    # 收集结果
+    market_sentiment = futures['market_sentiment'].result()
     
     if not is_sector:
-        # 2. 获取财务指标
-        try:
-            financials = get_stock_financial_indicator(stock_code)
-            if not financials or "error" in financials:
-                print(f"⚠️ 财务指标获取异常，使用默认值")
-                financials = {
-                    "warning": "财务指标数据暂不可用",
-                    "数据状态": "缺失",
-                    "建议": "建议人工复核财务数据"
-                }
-        except Exception as e:
-            print(f"获取财务指标失败: {e}")
-            financials = {
-                "warning": f"获取财务指标失败: {str(e)[:50]}",
-                "数据状态": "异常",
-                "建议": "建议人工复核财务数据"
-            }
-        
-        # 3. 获取资金流向
-        try:
-            fund_flow = get_stock_fund_flow(stock_code)
-            if not fund_flow or "error" in fund_flow:
-                print(f"⚠️ 资金流向获取异常，使用默认值")
-                fund_flow = {
-                    "代码": stock_code,
-                    "warning": "资金流向数据暂不可用",
-                    "数据状态": "缺失",
-                    "建议": "建议人工复核资金流向数据"
-                }
-        except Exception as e:
-            print(f"获取资金流向失败: {e}")
-            fund_flow = {
-                "代码": stock_code,
-                "warning": f"获取资金流向失败: {str(e)[:50]}",
-                "数据状态": "异常",
-                "建议": "建议人工复核资金流向数据"
-            }
-        
-        # 4. 获取行业对比数据
-        try:
-            industry_data = get_stock_industry_comparison(stock_code)
-            if not industry_data or "error" in industry_data:
-                print(f"⚠️ 行业对比数据获取异常，使用默认值")
-                industry_data = {
-                    "warning": "行业对比数据暂不可用",
-                    "数据状态": "缺失",
-                    "建议": "建议人工复核行业对比数据"
-                }
-        except Exception as e:
-            print(f"获取行业对比失败: {e}")
-            industry_data = {
-                "warning": f"获取行业数据失败: {str(e)[:50]}",
-                "数据状态": "异常",
-                "建议": "建议人工复核行业对比数据"
-            }
+        financials = futures['financials'].result()
+        fund_flow = futures['fund_flow'].result()
+        industry_data = futures['industry_data'].result()
+        valuation_history = futures['valuation_history'].result()
+    
+    elapsed_time = time.time() - start_time
+    print(f"✅ 并行数据获取完成，耗时: {elapsed_time:.2f}秒")
     
     if isinstance(df, pd.DataFrame) and not df.empty and len(df) >= 10:
         try:
@@ -331,10 +389,17 @@ def quant_agent_node(state: AgentState):
                 "slippage": engine.slippage,
             }
 
-            max_runs = int(config.get("backtest_max_runs", 40))
+            max_runs = int(config.get("backtest_max_runs", 20))  # 优化：从 40 减少到 20，提升性能
             runs = 0
+            skipped_by_missing = []
             
             for name, strategy_cls in STRATEGY_REGISTRY.items():
+                required_cols = getattr(strategy_cls, "required_columns", []) or []
+                missing = [c for c in required_cols if c not in df.columns]
+                if missing:
+                    skipped_by_missing.append({"name": name, "missing": missing})
+                    continue
+
                 grids = getattr(strategy_cls, "param_grid", None) or [None]
                 for params in grids:
                     if runs >= max_runs:
@@ -358,6 +423,12 @@ def quant_agent_node(state: AgentState):
                         formatted = _format_params(strategy_params)
                         if formatted:
                             label = f"{name} ({formatted})"
+                        
+                        trade_signals = engine.extract_trade_signals(run_results)
+                        signals_dict = [s.to_dict() for s in trade_signals]
+                        
+                        buy_count = len([s for s in signals_dict if s["type"] == "BUY"])
+                        sell_count = len([s for s in signals_dict if s["type"] == "SELL"])
 
                         backtest_results.append({
                             "name": name,
@@ -366,14 +437,26 @@ def quant_agent_node(state: AgentState):
                             "metrics": metrics,
                             "summary": PerformanceAnalytics.get_summary_report(metrics),
                             "curve": _sample_equity_curve(run_results, max_points=120),
+                            "signals": signals_dict,
+                            "buy_count": buy_count,
+                            "sell_count": sell_count,
                         })
                         runs += 1
                     except Exception as e:
+                        if isinstance(e, KeyError):
+                            missing_key = str(e).strip("'\"")
+                            skipped_by_missing.append({"name": name, "missing": [missing_key]})
+                            continue
                         print(f"策略 {name} 回测失败: {e}")
                         runs += 1
 
             # 按夏普比率排序
             backtest_results = sorted(backtest_results, key=lambda x: x["metrics"].get("sharpe", 0), reverse=True)
+            if skipped_by_missing:
+                unique_missing = sorted({m for item in skipped_by_missing for m in item.get("missing", [])})
+                preview = ", ".join(unique_missing[:8])
+                suffix = "..." if len(unique_missing) > 8 else ""
+                print(f"ℹ️ 已跳过 {len(skipped_by_missing)} 个策略，缺少字段: {preview}{suffix}")
             
             # 10. 组装结果
             quant_data = {
@@ -383,19 +466,22 @@ def quant_agent_node(state: AgentState):
                 "financials": financials,
                 "fund_flow": fund_flow,
                 "industry_comparison": industry_data,
+                "valuation_history": valuation_history,
+                "market_sentiment": market_sentiment,
                 "backtest_candidates": backtest_results # 传递候选策略集
             }
             
             return {
                 "quant_data": quant_data,
                 "technical_indicators": tech_indicators,
-                "messages": [f"已完成 {stock_name} 的量化数据获取与多策略回测分析。"]
+                "messages": [f"已完成 {stock_name} 的量化数据获取与多策略回测分析。"],
+                "consecutive_failures": state.get("consecutive_failures", 0)
             }
             
         except Exception as e:
             import traceback
             print(f"量化分析过程出错: {e}")
             print(traceback.format_exc())
-            return {"error": f"量化分析失败: {str(e)}"}
+            return {"error": f"量化分析失败: {str(e)}", "consecutive_failures": state.get("consecutive_failures", 0)}
     else:
-        return {"error": "获取到的数据不足以进行量化分析"}
+        return {"error": "获取到的数据不足以进行量化分析", "consecutive_failures": state.get("consecutive_failures", 0)}

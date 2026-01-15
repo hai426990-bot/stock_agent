@@ -637,6 +637,146 @@ def get_stock_industry_comparison(stock_code: str):
 
 @ttl_cache(ttl_seconds=3600)
 @retry()
+def get_stock_valuation_history(stock_code: str, days: int = 250):
+    """
+    获取股票历史估值数据 (PE, PB, PS等)
+    返回历史分位点等信息
+    """
+    try:
+        df = pd.DataFrame()
+        # 尝试获取历史估值 (乐咕乐股)
+        if hasattr(ak, "stock_a_indicator_lg"):
+            try:
+                df = ak.stock_a_indicator_lg(symbol=stock_code)
+            except Exception:
+                pass
+        
+        if not df.empty:
+            df['trade_date'] = pd.to_datetime(df['trade_date'])
+            df = df.sort_values('trade_date')
+            
+            latest = df.iloc[-1]
+            history = df.tail(days)
+            
+            # 计算分位点
+            pe_percentile = (df['pe'] < latest['pe']).mean() * 100
+            pb_percentile = (df['pb'] < latest['pb']).mean() * 100
+            
+            return {
+                "latest_pe": latest['pe'],
+                "pe_percentile": pe_percentile,
+                "latest_pb": latest['pb'],
+                "pb_percentile": pb_percentile,
+                "history": history.to_dict(orient="records")
+            }
+        
+        # Fallback: 如果无法获取历史数据，仅获取当前数据
+        spot_df = ak.stock_zh_a_spot_em()
+        if not spot_df.empty:
+            match = spot_df[spot_df["代码"] == stock_code]
+            if not match.empty:
+                row = match.iloc[0]
+                pe = row.get("市盈率-动态", 0)
+                pb = row.get("市净率", 0)
+                return {
+                    "latest_pe": pe,
+                    "pe_percentile": 50.0, # 无法计算分位，给默认值
+                    "latest_pb": pb,
+                    "pb_percentile": 50.0,
+                    "history": []
+                }
+                
+        return {}
+    except Exception as e:
+        print(f"获取估值历史失败: {e}")
+        return {}
+
+@ttl_cache(ttl_seconds=1800)
+@retry()
+def get_market_sentiment():
+    """
+    获取市场情绪指标 (如全市场涨跌停家数、换手率等)
+    """
+    try:
+        # 获取 A 股实时行情摘要作为情绪代理
+        df = ak.stock_zh_a_spot_em()
+        if not df.empty:
+            up = len(df[df["涨跌幅"] > 0])
+            down = len(df[df["涨跌幅"] < 0])
+            limit_up = len(df[df["涨跌幅"] >= 9.8])
+            limit_down = len(df[df["涨跌幅"] <= -9.8])
+            
+            total = len(df)
+            breadth = up / total if total > 0 else 0
+            
+            return {
+                "上涨家数": up,
+                "下跌家数": down,
+                "涨停家数": limit_up,
+                "跌停家数": limit_down,
+                "市场宽度": breadth,
+                "情绪描述": "极度乐观" if breadth > 0.8 else "乐观" if breadth > 0.6 else "中性" if breadth > 0.4 else "悲观" if breadth > 0.2 else "极度悲观"
+            }
+        return {}
+    except Exception as e:
+        print(f"获取市场情绪失败: {e}")
+        return {}
+
+@ttl_cache(ttl_seconds=60)
+@retry()
+def get_market_indices():
+    """
+    获取主要指数实时行情 (上证, 深证, 创业板, 科创50)
+    """
+    try:
+        # 使用新浪实时指数接口，覆盖面更广
+        df = ak.stock_zh_index_spot_sina()
+        if df.empty:
+            return []
+            
+        # 映射可能的列名 (由于编码问题，尝试匹配包含关键字的列)
+        name_col = next((c for c in df.columns if "名称" in c or "鍚嶇О" in c), "名称")
+        price_col = next((c for c in df.columns if "最新价" in c or "鏈€鏂颁环" in c), "最新价")
+        change_col = next((c for c in df.columns if "涨跌额" in c or "娑ㄨ穼棰" in c), "涨跌额")
+        pct_col = next((c for c in df.columns if "涨跌幅" in c or "娑ㄨ穼骞" in c), "涨跌幅")
+
+        target_indices = ["上证指数", "深证成指", "创业板指", "科创50"]
+        
+        results = []
+        for name in target_indices:
+            match = df[df[name_col].str.contains(name, na=False)]
+            if not match.empty:
+                row = match.iloc[0]
+                results.append({
+                    "name": name,
+                    "price": row[price_col],
+                    "change": row[change_col],
+                    "change_pct": row[pct_col]
+                })
+        return results
+    except Exception as e:
+        print(f"获取指数行情失败: {e}")
+        return []
+
+@ttl_cache(ttl_seconds=300)
+@retry()
+def get_market_hot_sectors(limit: int = 5):
+    """
+    获取领涨行业板块
+    """
+    try:
+        df = ak.stock_board_industry_name_em()
+        if not df.empty:
+            # 按涨跌幅排序
+            df = df.sort_values("涨跌幅", ascending=False).head(limit)
+            return df[["板块名称", "涨跌幅", "领涨股票", "最新价"]].to_dict(orient="records")
+        return []
+    except Exception as e:
+        print(f"获取热门板块失败: {e}")
+        return []
+
+@ttl_cache(ttl_seconds=3600)
+@retry()
 def search_stock_code(stock_name: str):
     """
     通过股票名称搜索股票代码 (AkShare)

@@ -15,6 +15,7 @@ class BaseStrategy(ABC):
     """
     name: str = "BaseStrategy"
     param_grid: ClassVar[List[Dict[str, Any]]] = []
+    required_columns: ClassVar[List[str]] = []
     
     def __init__(self, params: Dict[str, Any] = None):
         self.params = self.get_params_class()(**(params or {}))
@@ -341,6 +342,7 @@ class Volume_Trend_Params(StrategyParams):
 class VolumeTrend_Strategy(BaseStrategy):
     """Combines Trend (MA) and Volume confirmation"""
     name = "volume_trend_confirmation"
+    required_columns: ClassVar[List[str]] = ["close", "volume"]
     
     def get_params_class(self):
         return Volume_Trend_Params
@@ -369,6 +371,7 @@ class Value_Revision_Trend_Params(StrategyParams):
 class Value_Revision_Trend_Strategy(BaseStrategy):
     """Low Valuation + Earnings Revision + Trend Filter"""
     name = "value_revision_trend"
+    required_columns: ClassVar[List[str]] = ["close", "pe", "net_profit_growth"]
     
     def get_params_class(self):
         return Value_Revision_Trend_Params
@@ -398,6 +401,7 @@ class Quality_Growth_PEG_Params(StrategyParams):
 class Quality_Growth_PEG_Strategy(BaseStrategy):
     """Quality Growth + PEG + Graded Positioning"""
     name = "quality_growth_peg"
+    required_columns: ClassVar[List[str]] = ["roe", "peg"]
     
     def get_params_class(self):
         return Quality_Growth_PEG_Params
@@ -434,6 +438,7 @@ class Leader_Momentum_Drawdown_Params(StrategyParams):
 class Leader_Momentum_Drawdown_Strategy(BaseStrategy):
     """Leader + Momentum + Drawdown Control"""
     name = "leader_momentum_drawdown"
+    required_columns: ClassVar[List[str]] = ["close", "total_mv"]
     
     def get_params_class(self):
         return Leader_Momentum_Drawdown_Params
@@ -478,6 +483,7 @@ class HighMargin_Momentum_Industry_Params(StrategyParams):
 class HighMargin_Momentum_Industry_Strategy(BaseStrategy):
     """High Margin + Price Momentum + Industry Strength (Relative to market)"""
     name = "high_margin_momentum_industry"
+    required_columns: ClassVar[List[str]] = ["close", "gross_margin"]
     
     def get_params_class(self):
         return HighMargin_Momentum_Industry_Params
@@ -505,6 +511,7 @@ class Prosperity_Rotation_Params(StrategyParams):
 class Prosperity_Rotation_Strategy(BaseStrategy):
     """Prosperity Rotation (PMI) + Stock Quality (ROE/Growth)"""
     name = "prosperity_rotation"
+    required_columns: ClassVar[List[str]] = ["pmi", "roe", "net_profit_growth"]
     
     def get_params_class(self):
         return Prosperity_Rotation_Params
@@ -529,6 +536,7 @@ class Defensive_Offensive_Switch_Params(StrategyParams):
 class Defensive_Offensive_Switch_Strategy(BaseStrategy):
     """Switch: High Vol Period -> Low Vol/Defensive, Low Vol Period -> Momentum/Offensive"""
     name = "defensive_offensive_switch"
+    required_columns: ClassVar[List[str]] = ["close", "mkt_vol", "volatility"]
     
     def get_params_class(self):
         return Defensive_Offensive_Switch_Params
@@ -564,6 +572,7 @@ class Leader_Valuation_Weight_Params(StrategyParams):
 class Leader_Valuation_Weight_Strategy(BaseStrategy):
     """Leader + Valuation Stratification (Weighting: Cheap = 1.0, Expensive = 0.3)"""
     name = "leader_valuation_weight"
+    required_columns: ClassVar[List[str]] = ["total_mv", "pe"]
     
     def get_params_class(self):
         return Leader_Valuation_Weight_Params
@@ -593,6 +602,7 @@ class Value_Momentum_Quality_Params(StrategyParams):
 class Value_Momentum_Quality_Strategy(BaseStrategy):
     """Combined Factor Score (1/3 each: Value, Momentum, Quality)"""
     name = "value_momentum_quality_score"
+    required_columns: ClassVar[List[str]] = ["close", "pe", "roe"]
     
     def get_params_class(self):
         return Value_Momentum_Quality_Params
@@ -627,6 +637,7 @@ class LowVal_DebtRepair_Params(StrategyParams):
 class LowVal_DebtRepair_Strategy(BaseStrategy):
     """低估值 + 资产负债表修复 (Low PE + Decreasing Debt Ratio)"""
     name = "lowval_debt_repair"
+    required_columns: ClassVar[List[str]] = ["pe", "debt_to_assets"]
     
     def get_params_class(self):
         return LowVal_DebtRepair_Params
@@ -645,6 +656,7 @@ class Leader_Quality_Value_Params(StrategyParams):
 class Leader_Quality_Value_Strategy(BaseStrategy):
     """龙头价值 (Leader + Quality + Fair Valuation)"""
     name = "leader_quality_value"
+    required_columns: ClassVar[List[str]] = ["total_mv", "roe", "pe"]
     
     def get_params_class(self):
         return Leader_Quality_Value_Params
@@ -664,6 +676,7 @@ class Dividend_LowVol_Trend_Params(StrategyParams):
 class Dividend_LowVol_Trend_Strategy(BaseStrategy):
     """红利低波 + 趋势过滤 (Dividend + Low Vol + Trend Filter)"""
     name = "dividend_lowvol_trend"
+    required_columns: ClassVar[List[str]] = ["close", "dividend_yield", "volatility"]
     
     def get_params_class(self):
         return Dividend_LowVol_Trend_Params
@@ -691,6 +704,7 @@ class Momentum_Liquidity_Params(StrategyParams):
 class Momentum_Liquidity_Strategy(BaseStrategy):
     """动量 + 换手过滤 + 流动性分层 (Momentum + Turnover Filter + Liquidity)"""
     name = "momentum_liquidity"
+    required_columns: ClassVar[List[str]] = ["close", "turnover", "total_mv"]
     
     def get_params_class(self):
         return Momentum_Liquidity_Params
@@ -717,6 +731,7 @@ class Quality_Value_Stable_Params(StrategyParams):
 class Quality_Value_Stable_Strategy(BaseStrategy):
     """质量价值 (EP/BP + 毛利稳定 + 低应收)"""
     name = "quality_value_stable"
+    required_columns: ClassVar[List[str]] = ["pe", "pb", "gross_margin", "receivables_days"]
     
     def get_params_class(self):
         return Quality_Value_Stable_Params
@@ -742,6 +757,7 @@ class FCF_NoTrap_Params(StrategyParams):
 class FCF_NoTrap_Strategy(BaseStrategy):
     """价值不陷阱 (FCF Yield + 盈利上修 + 低杠杆)"""
     name = "fcf_no_trap"
+    required_columns: ClassVar[List[str]] = ["fcf_yield", "net_profit_growth", "debt_to_assets"]
     
     def get_params_class(self):
         return FCF_NoTrap_Params
@@ -767,6 +783,7 @@ class Reversion_Value_Industry_Params(StrategyParams):
 class Reversion_Value_Industry_Strategy(BaseStrategy):
     """反转 + 价值过滤 + 行业中性 (Control Style Drift)"""
     name = "reversion_value_industry"
+    required_columns: ClassVar[List[str]] = ["close", "pe", "idx_trend"]
     
     def get_params_class(self):
         return Reversion_Value_Industry_Params
@@ -792,6 +809,7 @@ class Tech_Prosperity_Params(StrategyParams):
 class Tech_Prosperity_Strategy(BaseStrategy):
     """科技景气 (Revenue Accel + Momentum + High Margin)"""
     name = "tech_prosperity"
+    required_columns: ClassVar[List[str]] = ["close", "revenue_growth", "gross_margin"]
     
     def get_params_class(self):
         return Tech_Prosperity_Params
@@ -817,6 +835,7 @@ class Shareholder_Return_Params(StrategyParams):
 class Shareholder_Return_Strategy(BaseStrategy):
     """股东回报 (Dividend + Low Vol + Quality)"""
     name = "shareholder_return"
+    required_columns: ClassVar[List[str]] = ["dividend_yield", "volatility", "roe"]
     
     def get_params_class(self):
         return Shareholder_Return_Params
@@ -868,6 +887,7 @@ class Volatility_Target_Params(StrategyParams):
 class Volatility_Target_Strategy(BaseStrategy):
     """波动率目标 + 多因子 (Volatility Target)"""
     name = "vol_target_multi_factor"
+    required_columns: ClassVar[List[str]] = ["close", "volatility"]
     
     def get_params_class(self):
         return Volatility_Target_Params
@@ -884,6 +904,74 @@ class Volatility_Target_Strategy(BaseStrategy):
         
         return (momentum.astype(float) * target_weight)
 
+class Grid_Trading_Params(StrategyParams):
+    grid_size: float = 0.05  # 5% grid
+    num_grids: int = 5
+    initial_price: Optional[float] = None
+
+@register_strategy
+class Grid_Trading_Strategy(BaseStrategy):
+    """Grid Trading Strategy (Mean Reversion)"""
+    name = "grid_trading"
+    
+    def get_params_class(self):
+        return Grid_Trading_Params
+        
+    def generate_signals(self, df: pd.DataFrame) -> pd.Series:
+        if df.empty: return pd.Series()
+        
+        initial_price = self.params.initial_price or df["close"].iloc[0]
+        grids = [initial_price * (1 + i * self.params.grid_size) for i in range(-self.params.num_grids, self.params.num_grids + 1)]
+        
+        position = pd.Series(0.0, index=df.index)
+        current_pos = 0.5 # Start with half position
+        
+        for i in range(len(df)):
+            price = df["close"].iloc[i]
+            # Simple grid logic: if price drops below a grid line, buy more; if it rises above, sell.
+            # Here we just map price to a position weight
+            # For simplicity: higher price -> lower weight, lower price -> higher weight
+            weight = 1.0 - ((price - min(grids)) / (max(grids) - min(grids)))
+            position.iloc[i] = np.clip(weight, 0, 1)
+            
+        return position
+
+class Bollinger_RSI_Params(StrategyParams):
+    bb_period: int = 20
+    bb_std: float = 2.0
+    rsi_period: int = 14
+    rsi_overbought: float = 70
+    rsi_oversold: float = 30
+
+@register_strategy
+class Bollinger_RSI_Strategy(BaseStrategy):
+    """Bollinger Bands + RSI Mean Reversion"""
+    name = "boll_rsi_reversion"
+    
+    def get_params_class(self):
+        return Bollinger_RSI_Params
+        
+    def generate_signals(self, df: pd.DataFrame) -> pd.Series:
+        from tools.indicators import calculate_bollinger_bands, calculate_rsi
+        
+        upper, mid, lower = calculate_bollinger_bands(df["close"], n=self.params.bb_period, k=self.params.bb_std)
+        rsi = calculate_rsi(df["close"], period=self.params.rsi_period)
+        
+        position = pd.Series(0.0, index=df.index)
+        holding = 0
+        for i in range(len(df)):
+            # Buy condition: Price below lower band AND RSI oversold
+            if holding == 0:
+                if df["close"].iloc[i] < lower.iloc[i] and rsi.iloc[i] < self.params.rsi_oversold:
+                    holding = 1
+            # Sell condition: Price above upper band OR RSI overbought
+            elif holding == 1:
+                if df["close"].iloc[i] > upper.iloc[i] or rsi.iloc[i] > self.params.rsi_overbought:
+                    holding = 0
+            position.iloc[i] = float(holding)
+            
+        return position
+
 class Index_Trend_Overlay_Params(StrategyParams):
     ma_fast: int = 20
     ma_slow: int = 60
@@ -892,6 +980,7 @@ class Index_Trend_Overlay_Params(StrategyParams):
 class Index_Trend_Overlay_Strategy(BaseStrategy):
     """指数趋势 overlay + 多因子底仓 (Index Trend Overlay)"""
     name = "index_trend_overlay"
+    required_columns: ClassVar[List[str]] = ["roe", "pe", "idx_trend"]
     
     def get_params_class(self):
         return Index_Trend_Overlay_Params

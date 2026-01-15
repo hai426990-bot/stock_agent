@@ -13,6 +13,7 @@ class AgentState(TypedDict):
     news_items: List[Dict[str, Any]] # 原始新闻列表
     news_analysis: str # LLM 对新闻的分析摘要
     sentiment_score: float # -1 to 1
+    fear_greed_index: float # 0 to 100
     quant_data: Dict[str, Any]
     technical_indicators: Dict[str, Any]
     backtest_result: Dict[str, Any]
@@ -31,3 +32,4 @@ class AgentState(TypedDict):
     reasoning_content: Annotated[List[Dict[str, str]], operator.add] # 存储各 Agent 的思考过程
     config: Dict[str, Any] # 存储每个用户独立的 API 和模型配置
     error: str # 存储节点错误信息，用于中止流程
+    consecutive_failures: Annotated[int, lambda x, y: y] # 记录连续失败次数，用于熔断机制（总是取最新值）

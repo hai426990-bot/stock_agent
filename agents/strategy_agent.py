@@ -112,7 +112,7 @@ def strategy_agent_node(state: AgentState):
     
     # 检查是否有错误或中断信号
     if state.get("error") or state.get("interrupted"):
-        return {"messages": []}
+        return {"messages": [], "consecutive_failures": state.get("consecutive_failures", 0)}
     
     print(f"--- 🧠 策略主理人: 正在综合分析 {stock_name}({stock_code}) [当前日期: {current_date}] ---")
     
@@ -125,21 +125,29 @@ def strategy_agent_node(state: AgentState):
     api_key = config.get("api_key")
     
     if not isinstance(api_key, str) or not api_key:
-        return {"strategy_report": "Error: Invalid API Key"}
+        return {"strategy_report": "Error: Invalid API Key", "consecutive_failures": state.get("consecutive_failures", 0)}
 
     # 深度思考模式配置
+    # 针对 mimo-v2-flash 等不支持深度思考的模型，禁用该功能
+    # strategy_agent 需要生成完整的报告，使用更大的 max_tokens
+    safe_max_tokens = min(max_tokens, 16384)  # 提高到 16384 以支持完整报告生成
+    
     llm_kwargs = {
         "model": model_name, 
         "temperature": temperature, 
-        "max_tokens": max_tokens,
+        "max_tokens": safe_max_tokens,
         "top_p": 0.95,
         "base_url": api_base,
         "api_key": api_key
     }
     
-    if config.get("thinking_mode"):
+    # 只对支持深度思考的模型启用（排除 mimo-v2-flash）
+    if config.get("thinking_mode") and not any(x in model_name.lower() for x in ["mimo", "flash"]):
         # 针对部分 Provider (如 DeepSeek) 的深度思考配置
         llm_kwargs["extra_body"] = {"thinking": {"type": "enabled"}}
+        print(f"✅ 已启用深度思考模式（max_tokens={safe_max_tokens}）")
+    else:
+        print(f"ℹ️ 已禁用深度思考模式（模型: {model_name}, max_tokens={safe_max_tokens}）")
 
     llm = ChatOpenAI(**llm_kwargs)
 
@@ -322,12 +330,14 @@ def strategy_agent_node(state: AgentState):
         
         return {
             "strategy_report": res.content,
-            "reasoning_content": [{"agent": "策略主理人", "content": reasoning if reasoning else "未获取到思考过程"}]
+            "reasoning_content": [{"agent": "策略主理人", "content": reasoning if reasoning else "未获取到思考过程"}],
+            "consecutive_failures": state.get("consecutive_failures", 0)
         }
     except Exception as e:
         error_msg = f"策略主理人运行出错: {str(e)}"
         print(f"💥 {error_msg}")
         return {
             "strategy_report": "生成策略报告失败",
-            "error": error_msg
+            "error": error_msg,
+            "consecutive_failures": state.get("consecutive_failures", 0)
         }
