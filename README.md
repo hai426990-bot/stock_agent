@@ -18,8 +18,8 @@ AlphaFlow 是一个基于 LangGraph 和 LangChain 构建的智能股票分析系
 
 系统包含一个五层架构的回测模块：
 
-- **数据层**: 统一数据格式，支持 SHA-256 数据版本验证、Parquet 本地缓存（价格/宏观/指数数据均缓存，避免重复拉取）
-- **策略层**: 基于 Pydantic 进行参数校验，支持自定义策略扩展（31 个注册策略）
+- **数据层**: 统一数据格式，支持 SHA-256 数据版本验证、Parquet 本地缓存（价格/宏观/指数数据均缓存，避免重复拉取），东方财富数据源不可用时自动回退到新浪源
+- **策略层**: 基于 Pydantic 进行参数校验，支持自定义策略扩展（35 个注册策略，含 ATR 追踪止损、突破止损、回调买入、年线做多等风控策略）
 - **引擎层**: 提供向量化回测引擎，支持交易税费与滑点模拟
 - **分析层**: 计算夏普比率、年化收益率、最大回撤、胜率等绩效指标
 - **持久化层**: 记录回测历史数据，便于后续复盘
@@ -199,8 +199,10 @@ SUPPORTED_MODELS=gpt-4o,gpt-4-turbo,gpt-3.5-turbo
 # 运行全部测试（agents / backtest / tools / backend API / SSE）
 .venv/Scripts/python -m pytest
 
-# 只跑后端测试
-.venv/Scripts/python -m pytest backend/tests backend/analysis/tests
+# 批量回测评估：在多个代表性股票上排名全部策略（默认 12 只股票，近 2 年）
+.venv/Scripts/python scripts/benchmark_strategies.py
+# 自定义：--days 1460  (4年)   --stocks 600519,000858   --top 15
+# 结果输出到 scripts/benchmark_results.csv
 
 # 前端类型检查与构建
 cd frontend && npx tsc -b && npm run build

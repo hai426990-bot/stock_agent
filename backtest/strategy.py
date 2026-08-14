@@ -418,7 +418,12 @@ class Leader_Momentum_Drawdown_Strategy(BaseStrategy):
     """Leader + Momentum + Drawdown Control"""
     name = "leader_momentum_drawdown"
     required_columns: ClassVar[List[str]] = ["close", "total_mv"]
-    
+    param_grid: ClassVar[List[Dict[str, Any]]] = [
+        {"momentum_period": 20, "stop_loss": -0.08, "market_cap_min": 500.0},
+        {"momentum_period": 20, "stop_loss": -0.05, "market_cap_min": 300.0},
+        {"momentum_period": 60, "stop_loss": -0.05, "market_cap_min": 300.0},
+    ]
+
     def get_params_class(self):
         return Leader_Momentum_Drawdown_Params
         
@@ -587,24 +592,30 @@ class Value_Momentum_Quality_Strategy(BaseStrategy):
         return Value_Momentum_Quality_Params
         
     def generate_signals(self, df: pd.DataFrame) -> pd.Series:
-        # Normalize factors (0 to 1 score)
+        # Normalize factors (0 to 1 score), min_periods so early windows still work
         # 1. Value (Inverse PE: lower PE is better)
         value_score = 1.0 / df["pe"].replace(0, np.nan)
-        value_score = (value_score - value_score.rolling(250).min()) / (value_score.rolling(250).max() - value_score.rolling(250).min())
-        
+        vmin = value_score.rolling(250, min_periods=60).min()
+        vmax = value_score.rolling(250, min_periods=60).max()
+        value_score = (value_score - vmin) / (vmax - vmin)
+
         # 2. Momentum (Return over lookback)
         mom_score = df["close"].pct_change(self.params.lookback)
-        mom_score = (mom_score - mom_score.rolling(250).min()) / (mom_score.rolling(250).max() - mom_score.rolling(250).min())
-        
+        mmin = mom_score.rolling(250, min_periods=60).min()
+        mmax = mom_score.rolling(250, min_periods=60).max()
+        mom_score = (mom_score - mmin) / (mmax - mmin)
+
         # 3. Quality (ROE)
         quality_score = df["roe"]
-        quality_score = (quality_score - quality_score.rolling(250).min()) / (quality_score.rolling(250).max() - quality_score.rolling(250).min())
-        
+        qmin = quality_score.rolling(250, min_periods=60).min()
+        qmax = quality_score.rolling(250, min_periods=60).max()
+        quality_score = (quality_score - qmin) / (qmax - qmin)
+
         combined_score = (value_score + mom_score + quality_score) / 3.0
-        
+
         # Signal: Top 30% of its own history
-        threshold = combined_score.rolling(250).quantile(0.7)
-        return (combined_score > threshold).astype(int)
+        threshold = combined_score.rolling(250, min_periods=60).quantile(0.7)
+        return ((combined_score > threshold) & combined_score.notna()).astype(int)
 
 # --- 实盘进阶策略 (Execution-Ready Advanced Strategies) ---
 
@@ -711,7 +722,12 @@ class Quality_Value_Stable_Strategy(BaseStrategy):
     """质量价值 (EP/BP + 毛利稳定 + 低应收)"""
     name = "quality_value_stable"
     required_columns: ClassVar[List[str]] = ["pe", "pb", "gross_margin", "receivables_days"]
-    
+    param_grid: ClassVar[List[Dict[str, Any]]] = [
+        {"pe_max": 40.0, "pb_max": 5.0, "margin_stability": -0.01, "receivables_max": 120},
+        {"pe_max": 45.0, "pb_max": 8.0, "margin_stability": -0.01, "receivables_max": 120},
+        {"pe_max": 35.0, "pb_max": 6.0, "margin_stability": -0.01, "receivables_max": 120},
+    ]
+
     def get_params_class(self):
         return Quality_Value_Stable_Params
         
@@ -972,3 +988,216 @@ class Index_Trend_Overlay_Strategy(BaseStrategy):
         idx_trend = df["idx_trend"] == 1
         
         return (is_quality_value & idx_trend).astype(int)
+
+
+# --- 风控增强策略 (Risk-Controlled Strategies) ---
+
+def _atr(df: pd.DataFrame, period: int = 14) -> pd.Series:
+    """Average True Range (Wilder smoothing)."""
+    prev_close = df["close"].shift(1)
+    tr = pd.concat([
+        df["high"] - df["low"],
+        (df["high"] - prev_close).abs(),
+        (df["low"] - prev_close).abs(),
+    ], axis=1).max(axis=1)
+    return tr.ewm(alpha=1.0 / period, adjust=False).mean()
+
+
+class Trend_ATR_Stop_Params(StrategyParams):
+    fast_ma: int = 20
+    slow_ma: int = 60
+    atr_period: int = 14
+    atr_stop_mult: float = 2.5   # trailing stop = highest close - mult * ATR
+    trend_ma: int = 120          # only trade above this MA (regime filter)
+    use_market_filter: bool = True  # skip entries when CSI300 trend is down
+
+
+@register_strategy
+class Trend_ATR_Stop_Strategy(BaseStrategy):
+    """趋势跟踪 + ATR 追踪止损 (Trend Following with ATR Trailing Stop)"""
+    name = "trend_atr_stop"
+    required_columns: ClassVar[List[str]] = ["close", "high", "low", "idx_trend"]
+    param_grid: ClassVar[List[Dict[str, Any]]] = [
+        {"fast_ma": 20, "slow_ma": 60, "atr_period": 14, "atr_stop_mult": 2.5, "trend_ma": 120, "use_market_filter": True},
+        {"fast_ma": 10, "slow_ma": 30, "atr_period": 14, "atr_stop_mult": 3.0, "trend_ma": 120, "use_market_filter": True},
+    ]
+
+    def get_params_class(self):
+        return Trend_ATR_Stop_Params
+
+    def generate_signals(self, df: pd.DataFrame) -> pd.Series:
+        fast = df["close"].rolling(self.params.fast_ma).mean()
+        slow = df["close"].rolling(self.params.slow_ma).mean()
+        regime = df["close"] > df["close"].rolling(self.params.trend_ma).mean()
+        market_ok = df["idx_trend"] == 1 if self.params.use_market_filter else pd.Series(True, index=df.index)
+        atr = _atr(df, self.params.atr_period)
+
+        position = pd.Series(0.0, index=df.index)
+        holding = False
+        trail_stop = 0.0
+        highest = 0.0
+        for i in range(len(df)):
+            if holding:
+                highest = max(highest, df["close"].iloc[i])
+                trail_stop = max(trail_stop, highest - self.params.atr_stop_mult * atr.iloc[i])
+                # Exit: price below trailing stop OR trend broken OR market turns down
+                if df["close"].iloc[i] < trail_stop or not bool(fast.iloc[i] > slow.iloc[i]) or \
+                   (self.params.use_market_filter and not bool(market_ok.iloc[i])):
+                    holding = False
+            else:
+                # Entry: fast MA above slow MA AND regime filter on AND market up
+                if bool(fast.iloc[i] > slow.iloc[i]) and bool(regime.iloc[i]) and bool(market_ok.iloc[i]):
+                    holding = True
+                    highest = df["close"].iloc[i]
+                    trail_stop = highest - self.params.atr_stop_mult * atr.iloc[i]
+            position.iloc[i] = 1.0 if holding else 0.0
+        return position
+
+
+class Above_Annual_Line_Params(StrategyParams):
+    annual_ma: int = 200        # 年线 (annual line)
+    momentum_period: int = 60   # medium-term momentum confirmation
+    atr_stop_mult: float = 3.5  # trailing stop width
+    require_momentum: bool = True
+
+
+@register_strategy
+class Above_Annual_Line_Strategy(BaseStrategy):
+    """年线上方做多 + 动量确认 + ATR 追踪止损
+
+    Classic 'only buy above the annual line' rule. The stock's own annual
+    moving average filters out individual bear markets that an index filter
+    cannot catch (e.g. white liquor stocks falling while CSI300 rises).
+    """
+    name = "above_annual_line"
+    required_columns: ClassVar[List[str]] = ["close", "high", "low"]
+    param_grid: ClassVar[List[Dict[str, Any]]] = [
+        {"annual_ma": 200, "momentum_period": 60, "atr_stop_mult": 3.5, "require_momentum": True},
+        {"annual_ma": 200, "momentum_period": 120, "atr_stop_mult": 3.0, "require_momentum": True},
+    ]
+
+    def get_params_class(self):
+        return Above_Annual_Line_Params
+
+    def generate_signals(self, df: pd.DataFrame) -> pd.Series:
+        annual = df["close"].rolling(self.params.annual_ma).mean()
+        above_line = df["close"] > annual
+        momentum_ok = df["close"].pct_change(self.params.momentum_period) > 0 if self.params.require_momentum else pd.Series(True, index=df.index)
+        atr = _atr(df, 14)
+
+        position = pd.Series(0.0, index=df.index)
+        holding = False
+        trail_stop = 0.0
+        highest = 0.0
+        for i in range(len(df)):
+            if holding:
+                highest = max(highest, df["close"].iloc[i])
+                trail_stop = max(trail_stop, highest - self.params.atr_stop_mult * atr.iloc[i])
+                if df["close"].iloc[i] < trail_stop or not bool(above_line.iloc[i]):
+                    holding = False
+            else:
+                if bool(above_line.iloc[i]) and bool(momentum_ok.iloc[i]):
+                    holding = True
+                    highest = df["close"].iloc[i]
+                    trail_stop = highest - self.params.atr_stop_mult * atr.iloc[i]
+            position.iloc[i] = 1.0 if holding else 0.0
+        return position
+
+
+class Momentum_Breakout_Stop_Params(StrategyParams):
+    entry_lookback: int = 55      # Donchian entry channel
+    exit_lookback: int = 20       # Donchian exit channel
+    momentum_period: int = 60     # require positive medium-term momentum
+    atr_stop_mult: float = 3.0    # hard stop below entry: entry - mult * ATR
+    use_market_filter: bool = True
+
+
+@register_strategy
+class Momentum_Breakout_Stop_Strategy(BaseStrategy):
+    """动量突破 + 止损保护 (Breakout with hard stop and momentum filter)"""
+    name = "momentum_breakout_stop"
+    required_columns: ClassVar[List[str]] = ["close", "high", "low", "idx_trend"]
+    param_grid: ClassVar[List[Dict[str, Any]]] = [
+        {"entry_lookback": 55, "exit_lookback": 20, "momentum_period": 60, "atr_stop_mult": 3.0, "use_market_filter": True},
+        {"entry_lookback": 20, "exit_lookback": 10, "momentum_period": 40, "atr_stop_mult": 2.5, "use_market_filter": True},
+    ]
+
+    def get_params_class(self):
+        return Momentum_Breakout_Stop_Params
+
+    def generate_signals(self, df: pd.DataFrame) -> pd.Series:
+        upper = df["high"].rolling(self.params.entry_lookback).max().shift(1)
+        lower = df["low"].rolling(self.params.exit_lookback).min().shift(1)
+        momentum_ok = df["close"].pct_change(self.params.momentum_period) > 0
+        market_ok = df["idx_trend"] == 1 if self.params.use_market_filter else pd.Series(True, index=df.index)
+        atr = _atr(df, 14)
+
+        position = pd.Series(0.0, index=df.index)
+        holding = False
+        entry_price = 0.0
+        for i in range(len(df)):
+            if holding:
+                # Exit: breakdown OR hard stop (entry - mult*ATR) OR market down
+                if df["close"].iloc[i] < lower.iloc[i] or \
+                   df["close"].iloc[i] < entry_price - self.params.atr_stop_mult * atr.iloc[i] or \
+                   (self.params.use_market_filter and not bool(market_ok.iloc[i])):
+                    holding = False
+            else:
+                if df["close"].iloc[i] > upper.iloc[i] and bool(momentum_ok.iloc[i]) and bool(market_ok.iloc[i]):
+                    holding = True
+                    entry_price = df["close"].iloc[i]
+            position.iloc[i] = 1.0 if holding else 0.0
+        return position
+
+
+class Pullback_Trend_Params(StrategyParams):
+    ma_fast: int = 20
+    ma_slow: int = 60
+    rsi_period: int = 14
+    rsi_buy_max: float = 55.0    # buy only when RSI pulled back below this
+    rsi_exit: float = 70.0       # exit when overbought
+    stop_loss: float = -0.06     # 6% stop loss from entry
+    use_market_filter: bool = True
+
+
+@register_strategy
+class Pullback_Trend_Strategy(BaseStrategy):
+    """上升趋势中的回调买入 (Buy the dip in an uptrend, with stop loss)"""
+    name = "pullback_trend"
+    required_columns: ClassVar[List[str]] = ["close", "high", "low", "idx_trend"]
+    param_grid: ClassVar[List[Dict[str, Any]]] = [
+        {"ma_fast": 20, "ma_slow": 60, "rsi_period": 14, "rsi_buy_max": 55.0, "rsi_exit": 70.0, "stop_loss": -0.06, "use_market_filter": True},
+        {"ma_fast": 10, "ma_slow": 30, "rsi_period": 14, "rsi_buy_max": 50.0, "rsi_exit": 70.0, "stop_loss": -0.08, "use_market_filter": True},
+    ]
+
+    def get_params_class(self):
+        return Pullback_Trend_Params
+
+    def generate_signals(self, df: pd.DataFrame) -> pd.Series:
+        delta = df["close"].diff()
+        gain = delta.where(delta > 0, 0).rolling(window=self.params.rsi_period).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(window=self.params.rsi_period).mean()
+        rs = gain / loss
+        rsi = 100 - (100 / (1 + rs))
+
+        fast = df["close"].rolling(self.params.ma_fast).mean()
+        slow = df["close"].rolling(self.params.ma_slow).mean()
+        market_ok = df["idx_trend"] == 1 if self.params.use_market_filter else pd.Series(True, index=df.index)
+
+        position = pd.Series(0.0, index=df.index)
+        holding = False
+        entry_price = 0.0
+        for i in range(len(df)):
+            if holding:
+                # Exit: overbought OR stop loss OR market turns down
+                if rsi.iloc[i] > self.params.rsi_exit or \
+                   df["close"].iloc[i] < entry_price * (1 + self.params.stop_loss) or \
+                   (self.params.use_market_filter and not bool(market_ok.iloc[i])):
+                    holding = False
+            else:
+                # Entry: uptrend + pullback (RSI below buy max) + market up
+                if bool(fast.iloc[i] > slow.iloc[i]) and rsi.iloc[i] < self.params.rsi_buy_max and bool(market_ok.iloc[i]):
+                    holding = True
+                    entry_price = df["close"].iloc[i]
+            position.iloc[i] = 1.0 if holding else 0.0
+        return position

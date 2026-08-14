@@ -12,6 +12,11 @@ from backtest.strategy import (
     Quality_Growth_PEG_Strategy,
     Leader_Momentum_Drawdown_Strategy,
     Leader_Quality_Value_Strategy,
+    Above_Annual_Line_Strategy,
+    Trend_ATR_Stop_Strategy,
+    Momentum_Breakout_Stop_Strategy,
+    Pullback_Trend_Strategy,
+    Value_Momentum_Quality_Strategy,
 )
 
 
@@ -31,8 +36,40 @@ def _df(n=300, **fundamental_cols):
 
 def test_registry_has_expected_strategies():
     for name in ("ma_crossover", "rsi_reversion", "macd_trend", "boll_breakout_volume",
-                 "quality_growth_peg", "leader_momentum_drawdown", "grid_trading"):
+                 "quality_growth_peg", "leader_momentum_drawdown", "grid_trading",
+                 "trend_atr_stop", "momentum_breakout_stop", "pullback_trend",
+                 "above_annual_line"):
         assert name in STRATEGY_REGISTRY
+
+
+@pytest.mark.parametrize("cls", [
+    Trend_ATR_Stop_Strategy,
+    Momentum_Breakout_Stop_Strategy,
+    Pullback_Trend_Strategy,
+    Above_Annual_Line_Strategy,
+])
+def test_risk_controlled_strategies_run_in_engine(cls):
+    """New stop-loss strategies must produce valid 0/1 positions in the engine."""
+    df = _df(n=300, idx_trend=1)
+    strategy = cls(params={})
+    results = VectorizedEngine().run(strategy, df)
+    assert not results.empty
+    assert "equity" in results.columns
+    signals = strategy.generate_signals(df)
+    assert set(signals.dropna().unique()) <= {0.0, 1.0}
+
+
+def test_value_momentum_quality_score_generates_signals():
+    """Regression: rolling(250) without min_periods produced all-NaN thresholds
+    on realistic data windows, so the strategy never traded."""
+    rng = np.random.default_rng(7)
+    df = _df(n=400, pe=25.0, roe=0.2)
+    # Vary PE/ROE so factor normalization windows are well-defined.
+    df["pe"] = 25.0 + rng.normal(0, 3, len(df))
+    df["roe"] = 0.2 + rng.normal(0, 0.02, len(df))
+    strategy = Value_Momentum_Quality_Strategy(params={})
+    signals = strategy.generate_signals(df)
+    assert (signals > 0).sum() > 0
 
 
 def test_bollinger_breakout_uses_its_own_params():

@@ -69,31 +69,51 @@ class DataManager:
         if os.path.exists(cache_path):
             return pd.read_parquet(cache_path)
         
-        # Mapping AkShare data to unified schema
-        # AkShare stock_zh_a_hist returns: 日期, 开盘, 收盘, 最高, 最低, 成交量, 成交额, 振幅, 涨跌幅, 涨跌额, 换手率
         period_map = {"daily": "daily", "weekly": "weekly", "monthly": "monthly"}
-        df = ak.stock_zh_a_hist(symbol=symbol, period=period_map.get(freq, "daily"), 
-                               start_date=start_date, end_date=end_date, adjust=adjust)
-        
+        period = period_map.get(freq, "daily")
+
+        # Primary source: EastMoney (东方财富). Falls back to Sina when unreachable.
+        df = pd.DataFrame()
+        try:
+            # AkShare stock_zh_a_hist returns: 日期, 开盘, 收盘, 最高, 最低, 成交量, 成交额, 振幅, 涨跌幅, 涨跌额, 换手率
+            df = ak.stock_zh_a_hist(symbol=symbol, period=period,
+                                    start_date=start_date, end_date=end_date, adjust=adjust)
+            if not df.empty:
+                rename_map = {
+                    "日期": "dt", "开盘": "open", "最高": "high", "最低": "low",
+                    "收盘": "close", "成交量": "volume", "换手率": "turnover",
+                }
+                df = df.rename(columns=rename_map)
+                df["dt"] = pd.to_datetime(df["dt"])
+                df["adj_close"] = df["close"]  # already adjusted when adjust is set
+                df = df[["dt", "open", "high", "low", "close", "volume", "adj_close", "turnover"]]
+        except Exception as e:
+            print(f"⚠️ 东方财富数据源不可用({e})，回退到新浪数据源...")
+
+        if df.empty:
+            # Fallback: Sina (新浪). Daily/Weekly/Monthly periods are not supported, only daily.
+            sina_symbol = symbol
+            if symbol.startswith(("sh", "sz", "bj")) is False:
+                prefix = "sh" if symbol.startswith(("5", "6", "9")) else "sz"
+                sina_symbol = prefix + symbol
+            try:
+                raw = ak.stock_zh_a_daily(symbol=sina_symbol, start_date=start_date,
+                                          end_date=end_date, adjust="qfq")
+                if not raw.empty:
+                    df = raw.rename(columns={"date": "dt"})
+                    df["dt"] = pd.to_datetime(df["dt"])
+                    df["adj_close"] = df["close"]
+                    # Sina turnover is a fraction (e.g. 0.0023); normalize to percent to match EM.
+                    df["turnover"] = df.get("turnover", 0.0) * 100
+                    df["outstanding_share"] = df.get("outstanding_share", 0.0)
+                    df = df[["dt", "open", "high", "low", "close", "volume", "adj_close", "turnover", "outstanding_share"]]
+                    print(f"✅ 使用新浪数据源获取 {symbol} ({len(df)} 行)")
+            except Exception as e2:
+                print(f"❌ 新浪数据源也失败: {e2}")
+
         if df.empty:
             return pd.DataFrame()
             
-        # Standardize columns
-        rename_map = {
-            "日期": "dt",
-            "开盘": "open",
-            "最高": "high",
-            "最低": "low",
-            "收盘": "close",
-            "成交量": "volume",
-            "换手率": "turnover"
-        }
-        df = df.rename(columns=rename_map)
-        df["dt"] = pd.to_datetime(df["dt"])
-        df["adj_close"] = df["close"] # AkShare's close is already adjusted if adjust is set
-        
-        # Select required columns
-        df = df[["dt", "open", "high", "low", "close", "volume", "adj_close", "turnover"]]
         df = df.sort_values("dt").reset_index(drop=True)
         
         # Save to cache
@@ -157,12 +177,18 @@ class DataManager:
                 idx_df = self._fetch_index_csi300()
                 if not idx_df.empty:
                     idx_df = idx_df.rename(columns={"date": "dt", "close": "idx_close"})
-                    idx_df["dt"] = pd.to_datetime(idx_df["dt"])
+                    idx_df["dt"] = pd.to_datetime(idx_df["dt"]).astype("datetime64[ns]")
                     idx_df = idx_df[["dt", "idx_close"]]
                     # Calculate index trend (MA250)
                     idx_df["idx_ma250"] = idx_df["idx_close"].rolling(window=250).mean()
                     idx_df["idx_trend"] = (idx_df["idx_close"] > idx_df["idx_ma250"]).astype(int)
                     
+                    # Drop stale indicator columns created by add_fundamental_indicators
+                    # (they are filled placeholders; the merge below would otherwise
+                    #  produce idx_trend_x/idx_trend_y suffixes and break the filter).
+                    for col in ["idx_close", "idx_ma250", "idx_trend"]:
+                        if col in df.columns:
+                            df = df.drop(columns=[col])
                     df = pd.merge(df, idx_df, on="dt", how="left")
                     df["idx_trend"] = df["idx_trend"].ffill().bfill().fillna(1)
                 else:
@@ -185,6 +211,20 @@ class DataManager:
     def _fetch_index_csi300(self) -> pd.DataFrame:
         """Fetch CSI 300 daily index data, cached to disk."""
         return ak.stock_zh_index_daily(symbol="sh000300")
+
+    @_file_ttl_cache(".backtest_cache", "dividend_rates", ttl_seconds=86400 * 7)
+    @retry(max_retries=2)
+    def _fetch_dividend_rates(self) -> pd.DataFrame:
+        """Fetch full-market historical dividend table (Sina), cached weekly.
+
+        Used as a fallback for dividend_yield when EastMoney is unreachable:
+        approximates yield as average annual dividend per share / latest price.
+        """
+        df = ak.stock_history_dividend()
+        if df is None or df.empty:
+            return pd.DataFrame()
+        df = df.rename(columns={"代码": "code", "年均股息": "avg_dividend"})
+        return df[["code", "avg_dividend"]]
 
     def _parse_chinese_num(self, val):
         """Convert '1.60亿' to 1.6e8, '94.52%' to 0.9452"""
@@ -246,6 +286,9 @@ class DataManager:
                 # Merge with price data
                 # Use merge_asof to align price date with the latest available report date
                 df = df.sort_values("dt")
+                # Normalize datetime precision (ms vs us) so merge_asof keys match.
+                df["dt"] = df["dt"].astype("datetime64[ns]")
+                fin_df["report_date"] = fin_df["report_date"].astype("datetime64[ns]")
                 available_cols = ["report_date", "net_profit", "net_profit_growth", "revenue", "revenue_growth", "bps", "roe", "eps", "gross_margin", "debt_to_assets", "ocf_ps", "receivables_days"]
                 cols_to_merge = [c for c in available_cols if c in fin_df.columns]
                 
@@ -268,21 +311,28 @@ class DataManager:
                     df["fcf_yield"] = df["ocf_ps"] / df["close"]
 
             # 2. Estimate Historical Market Cap
-            # Try to get current total shares to estimate historical market cap (approximation)
-            info_df = ak.stock_individual_info_em(symbol=symbol)
+            # Prefer outstanding_share from Sina fallback data (constant, historically valid);
+            # otherwise fall back to EastMoney's current total shares as approximation.
             total_shares = None
             dividend_yield = 0.0
-            if not info_df.empty:
+            if "outstanding_share" in df.columns:
+                os_vals = df["outstanding_share"].dropna()
+                if not os_vals.empty and os_vals.iloc[-1] > 0:
+                    total_shares = float(os_vals.iloc[-1])
+
+            if total_shares is None:
                 try:
-                    # '总股本' is usually the 4th item in stock_individual_info_em
-                    res = info_df[info_df["item"] == "总股本"]["value"]
-                    if not res.empty:
-                        total_shares = float(res.iloc[0])
-                    
-                    # Also try to get dividend yield (股息率)
-                    dy_res = info_df[info_df["item"] == "股息率"]["value"]
-                    if not dy_res.empty:
-                        dividend_yield = self._parse_chinese_num(dy_res.iloc[0]) or 0.0
+                    info_df = ak.stock_individual_info_em(symbol=symbol)
+                    if not info_df.empty:
+                        # '总股本' is usually the 4th item in stock_individual_info_em
+                        res = info_df[info_df["item"] == "总股本"]["value"]
+                        if not res.empty:
+                            total_shares = float(res.iloc[0])
+
+                        # Also try to get dividend yield (股息率)
+                        dy_res = info_df[info_df["item"] == "股息率"]["value"]
+                        if not dy_res.empty:
+                            dividend_yield = self._parse_chinese_num(dy_res.iloc[0]) or 0.0
                 except:
                     pass
             
@@ -291,8 +341,20 @@ class DataManager:
                 # (e.g. 500.0 = 500亿) match the data scale.
                 df["total_mv"] = df["close"] * total_shares / 1e8
             
+            if "dividend_yield" not in df.columns or df["dividend_yield"].fillna(0).eq(0).all():
+                # EastMoney unreachable: approximate dividend yield from Sina's
+                # average annual dividend per share / latest close price.
+                try:
+                    div_df = self._fetch_dividend_rates()
+                    if not div_df.empty:
+                        row = div_df[div_df["code"] == symbol]
+                        if not row.empty and row["avg_dividend"].iloc[0] and df["close"].iloc[-1]:
+                            div_yield = float(row["avg_dividend"].iloc[0]) / float(df["close"].iloc[-1])
+                            df["dividend_yield"] = div_yield
+                except Exception as e:
+                    print(f"Warning: failed to fetch dividend fallback for {symbol}: {e}")
             if "dividend_yield" not in df.columns:
-                df["dividend_yield"] = dividend_yield
+                df["dividend_yield"] = 0.0
 
             # 3. Final Fill NaN values (important for signal generation)
             cols_to_fill = ["pe", "pb", "roe", "net_profit_growth", "revenue", "revenue_growth", "peg", "total_mv", "eps", "bps", "gross_margin", "debt_to_assets", "ocf_ps", "receivables_days", "fcf_yield", "dividend_yield", "idx_trend"]

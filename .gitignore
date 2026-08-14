@@ -46,3 +46,6 @@ frontend/*.tsbuildinfo
 # Django
 backend/db.sqlite3
 backend/staticfiles/
+
+# Benchmark outputs
+scripts/benchmark_results.csv
