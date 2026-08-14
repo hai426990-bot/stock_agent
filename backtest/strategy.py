@@ -267,27 +267,6 @@ class Bollinger_Breakout_Volume_Strategy(BaseStrategy):
                 holding = False
             position.iloc[i] = 1.0 if holding else 0.0
         return position
-    
-    def get_params_class(self):
-        return Trend_Momentum_Params
-        
-    def generate_signals(self, df: pd.DataFrame) -> pd.Series:
-        # MACD
-        exp1 = df["close"].ewm(span=self.params.macd_fast, adjust=False).mean()
-        exp2 = df["close"].ewm(span=self.params.macd_slow, adjust=False).mean()
-        macd = exp1 - exp2
-        signal_line = macd.ewm(span=self.params.macd_signal, adjust=False).mean()
-        macd_bullish = macd > signal_line
-        
-        # RSI
-        delta = df["close"].diff()
-        gain = delta.where(delta > 0, 0).rolling(window=self.params.rsi_period).mean()
-        loss = (-delta.where(delta < 0, 0)).rolling(window=self.params.rsi_period).mean()
-        rs = gain / loss
-        rsi = 100 - (100 / (1 + rs))
-        
-        # Signals: MACD cross up AND RSI not overbought
-        return (macd_bullish & (rsi < self.params.rsi_buy_max)).astype(int)
 
 class MeanReversion_Volatility_Params(StrategyParams):
     bb_period: int = 20
@@ -391,10 +370,10 @@ class Value_Revision_Trend_Strategy(BaseStrategy):
         return (low_val & revision_up & trend_ok).astype(int)
 
 class Quality_Growth_PEG_Params(StrategyParams):
-    roe_min: float = 15.0
+    roe_min: float = 0.15
     peg_min: float = 0.5
     peg_max: float = 1.5
-    strong_roe: float = 20.0
+    strong_roe: float = 0.20
     strong_peg_max: float = 1.2
 
 @register_strategy

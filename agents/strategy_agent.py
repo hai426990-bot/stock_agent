@@ -1,9 +1,7 @@
-from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
+from agents.llm import build_llm
 from state import AgentState
-import os
 from datetime import datetime
-import re
 
 def generate_revision_checklist(risk_reason: str) -> str:
     """
@@ -118,38 +116,13 @@ def strategy_agent_node(state: AgentState):
     
     # 从 state 中获取独立配置
     config = state.get("config", {})
-    model_name = config.get("model_name", "gpt-3.5-turbo")
-    temperature = config.get("temperature", 0.5)
-    max_tokens = config.get("max_tokens", 4096)
-    api_base = config.get("api_base", "https://api.openai.com/v1")
     api_key = config.get("api_key")
-    
+
     if not isinstance(api_key, str) or not api_key:
         return {"strategy_report": "Error: Invalid API Key", "consecutive_failures": state.get("consecutive_failures", 0)}
 
-    # 深度思考模式配置
-    # 针对 mimo-v2-flash 等不支持深度思考的模型，禁用该功能
-    # strategy_agent 需要生成完整的报告，使用更大的 max_tokens
-    safe_max_tokens = min(max_tokens, 16384)  # 提高到 16384 以支持完整报告生成
-    
-    llm_kwargs = {
-        "model": model_name, 
-        "temperature": temperature, 
-        "max_tokens": safe_max_tokens,
-        "top_p": 0.95,
-        "base_url": api_base,
-        "api_key": api_key
-    }
-    
-    # 只对支持深度思考的模型启用（排除 mimo-v2-flash）
-    if config.get("thinking_mode") and not any(x in model_name.lower() for x in ["mimo", "flash"]):
-        # 针对部分 Provider (如 DeepSeek) 的深度思考配置
-        llm_kwargs["extra_body"] = {"thinking": {"type": "enabled"}}
-        print(f"✅ 已启用深度思考模式（max_tokens={safe_max_tokens}）")
-    else:
-        print(f"ℹ️ 已禁用深度思考模式（模型: {model_name}, max_tokens={safe_max_tokens}）")
-
-    llm = ChatOpenAI(**llm_kwargs)
+    # strategy_agent 需要生成完整的报告，使用更大的 max_tokens 上限
+    llm = build_llm(config, max_tokens_cap=16384)
 
     # 根据是否是板块调整角色和任务
     role_definition = "你是一位顶级的基金经理，擅长宏观趋势判断与 ETF 资产配置。" if is_sector else '你是一位顶级的公募基金经理，以"价值驱动、风险优先、技术择时"三位一体的投资风格著称。'

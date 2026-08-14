@@ -1,13 +1,12 @@
 """
 同花顺新闻实时动态分析 Agent
 """
-from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.output_parsers import JsonOutputParser
+from agents.llm import build_llm
 from state import AgentState
 from tools.news_fetcher import get_10jqka_news
-from datetime import datetime
 import json
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
 def telegraph_agent_node(state: AgentState):
@@ -32,10 +31,6 @@ def telegraph_agent_node(state: AgentState):
     
     # 获取配置
     config = state.get("config", {})
-    model_name = config.get("model_name", "gpt-3.5-turbo")
-    temperature = config.get("temperature", 0.3)
-    max_tokens = config.get("max_tokens", 2048)
-    api_base = config.get("api_base", "https://api.openai.com/v1")
     api_key = config.get("api_key")
     
     if not isinstance(api_key, str) or not api_key:
@@ -66,21 +61,8 @@ def telegraph_agent_node(state: AgentState):
             "consecutive_failures": state.get("consecutive_failures", 0)
         }
     
-    # 配置 LLM
-    llm_kwargs = {
-        "model": model_name,
-        "temperature": temperature,
-        "max_tokens": max_tokens,
-        "top_p": 0.95,
-        "base_url": api_base,
-        "api_key": api_key
-    }
-    
-    # 针对 mimo-v2-flash 模型禁用深度思考
-    if config.get("thinking_mode") and not any(x in model_name.lower() for x in ["mimo", "flash"]):
-        llm_kwargs["extra_body"] = {"thinking": {"type": "enabled"}}
-    
-    llm = ChatOpenAI(**llm_kwargs)
+    # 配置 LLM（与其他 Agent 共用工厂；telegraph 原用 temperature 0.3 / 2048 tokens）
+    llm = build_llm(config, max_tokens_cap=4096)
     
     # 对每条新闻进行单独分析
     analyzed_news = []
@@ -138,10 +120,10 @@ def telegraph_agent_node(state: AgentState):
     ])
     
     try:
-        # 分析每条新闻
-        for i, news in enumerate(news_list[:10], 1):
-            print(f"   分析第 {i} 条新闻...")
-            
+        # 并行分析每条新闻（LLM 调用是流水线瓶颈，串行 10 次会拖慢整体）
+        analyzed_news = []
+
+        def analyze_one(news):
             try:
                 # 调用 LLM 分析单条新闻
                 chain = single_news_prompt | llm
@@ -164,18 +146,29 @@ def telegraph_agent_node(state: AgentState):
                         "opportunities": [],
                         "risks": []
                     }
-                
-                # 将分析结果添加到新闻中
-                news_with_analysis = {
-                    **news,
-                    "analysis": analysis
+            except Exception as e:
+                print(f"   ⚠️ 分析新闻失败: {e}")
+                analysis = {
+                    "event_type": "其他",
+                    "impact": "中性",
+                    "sentiment": "中性",
+                    "comment": "分析失败",
+                    "opportunities": [],
+                    "risks": []
                 }
+
+            return {**news, "analysis": analysis}, analysis
+
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            futures = [executor.submit(analyze_one, news) for news in news_list[:10]]
+            for future in as_completed(futures):
+                news_with_analysis, analysis = future.result()
                 analyzed_news.append(news_with_analysis)
                 
                 # 收集重要事件（影响为正面或负面的事件）
                 if analysis.get('impact') in ['正面', '负面']:
                     important_events.append({
-                        "title": news['title'],
+                        "title": news_with_analysis['title'],
                         "impact": analysis.get('impact'),
                         "description": analysis.get('comment', ''),
                         "event_type": analysis.get('event_type', '其他')
@@ -188,22 +181,9 @@ def telegraph_agent_node(state: AgentState):
                 # 收集情绪分数
                 sentiment_map = {'乐观': 1, '中性': 0, '悲观': -1}
                 sentiment_scores.append(sentiment_map.get(analysis.get('sentiment', '中性'), 0))
-                
-            except Exception as e:
-                print(f"   ⚠️ 分析第 {i} 条新闻失败: {e}")
-                # 即使分析失败，也保留原始新闻
-                analyzed_news.append({
-                    **news,
-                    "analysis": {
-                        "event_type": "其他",
-                        "impact": "中性",
-                        "sentiment": "中性",
-                        "comment": "分析失败",
-                        "opportunities": [],
-                        "risks": []
-                    }
-                })
-        
+
+        print(f"✅ 并行分析完成，共分析 {len(analyzed_news)} 条新闻")
+
         # 计算整体市场情绪
         if sentiment_scores:
             avg_sentiment = sum(sentiment_scores) / len(sentiment_scores)
@@ -219,19 +199,34 @@ def telegraph_agent_node(state: AgentState):
         # 生成总体摘要
         summary = f"今日市场整体情绪{market_sentiment}，共分析{len(analyzed_news)}条新闻，识别{len(important_events)}个重要事件"
         
+        # 去重（机会可能是字符串或 dict，需按可哈希性分别处理）
+        unique_opportunities = []
+        seen = set()
+        for opp in opportunities:
+            if isinstance(opp, (str, int, float)):
+                key = opp
+            elif isinstance(opp, dict):
+                key = json.dumps(opp, ensure_ascii=False, sort_keys=True)
+            else:
+                unique_opportunities.append(opp)
+                continue
+            if key not in seen:
+                seen.add(key)
+                unique_opportunities.append(opp)
+
         # 汇总分析结果
         overall_analysis = {
             "summary": summary,
             "market_sentiment": market_sentiment,
             "important_events": important_events,
-            "opportunities": list(set(opportunities)),  # 去重
+            "opportunities": unique_opportunities,
             "analyzed_count": len(analyzed_news)
         }
         
         print(f"✅ 同花顺新闻分析完成")
         print(f"   市场情绪: {market_sentiment}")
         print(f"   重要事件: {len(important_events)} 个")
-        print(f"   投资机会: {len(opportunities)} 个")
+        print(f"   投资机会: {len(unique_opportunities)} 个")
         
         return {
             "telegraph_analysis": overall_analysis,

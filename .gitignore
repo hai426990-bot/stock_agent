@@ -22,14 +22,27 @@ analysis_history/
 .model_cache.json
 .backtest_cache/
 .backtest_results/
+.akshare_cache.json
+
+# Logs
+logs/
 
 # IDE
 .vscode/
 .idea/
 *.swp
 *.swo
-.akshare_cache.json
 agents/__init__.py
 
 # Codex
 .codex_write_test.txt
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.tsbuildinfo
+frontend/*.tsbuildinfo
+
+# Django
+backend/db.sqlite3
+backend/staticfiles/

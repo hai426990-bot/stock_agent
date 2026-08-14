@@ -4,27 +4,42 @@ import os
 import json
 import hashlib
 import numpy as np
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional, Dict, Any
 from functools import wraps
 import time
+from tools.retry import retry
 
-def retry(max_retries=3, delay=1, backoff=2):
+def _file_ttl_cache(cache_dir: str, name: str, ttl_seconds: int = 86400):
+    """Decorator: cache a DataFrame-returning method/function to a parquet file with TTL.
+
+    Avoids re-fetching slow macro/index endpoints on every analysis run.
+    For bound methods, the instance's cache_dir (if set) overrides the default.
+    """
     def decorator(func):
         @wraps(func)
         def wrapper(*args, **kwargs):
-            retries = 0
-            current_delay = delay
-            while retries < max_retries:
+            base_dir = cache_dir
+            if args and hasattr(args[0], "cache_dir"):
+                base_dir = args[0].cache_dir
+            key = func.__name__
+            if args:
+                key += "_" + "_".join(str(a) for a in args[1:])
+            path = os.path.join(base_dir, f"{name}_{key}.parquet")
+            if os.path.exists(path):
+                age = time.time() - os.path.getmtime(path)
+                if age < ttl_seconds:
+                    try:
+                        return pd.read_parquet(path)
+                    except Exception:
+                        pass
+            df = func(*args, **kwargs)
+            if df is not None and not df.empty:
                 try:
-                    return func(*args, **kwargs)
+                    df.to_parquet(path)
                 except Exception as e:
-                    retries += 1
-                    if retries == max_retries:
-                        raise e
-                    time.sleep(current_delay)
-                    current_delay *= backoff
-            return None
+                    print(f"Warning: failed to cache {func.__name__}: {e}")
+            return df
         return wrapper
     return decorator
 
@@ -96,14 +111,11 @@ class DataManager:
         return df
 
     def add_macro_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Add macro proxies like PMI"""
+        """Add macro proxies like PMI (cached per-day)"""
         try:
-            # Fetch PMI data
-            # macro_china_pmi_yearly: 日期, 今值, ...
-            pmi_df = ak.macro_china_pmi_yearly()
+            # Fetch PMI data (cached: PMI updates monthly, 1-day TTL is plenty)
+            pmi_df = self._fetch_pmi()
             if not pmi_df.empty:
-                # Filter for official manufacturing PMI
-                pmi_df = pmi_df[pmi_df["商品"] == "中国官方制造业PMI"]
                 pmi_df = pmi_df[["日期", "今值"]]
                 pmi_df.columns = ["month", "pmi"]
                 pmi_df["month"] = pd.to_datetime(pmi_df["month"])
@@ -121,6 +133,15 @@ class DataManager:
                 df["pmi"] = 50.0
         return df
 
+    @_file_ttl_cache(".backtest_cache", "pmi", ttl_seconds=86400)
+    @retry(max_retries=2)
+    def _fetch_pmi(self) -> pd.DataFrame:
+        """Fetch official manufacturing PMI, filtered and cached to disk."""
+        pmi_df = ak.macro_china_pmi_yearly()
+        if not pmi_df.empty:
+            pmi_df = pmi_df[pmi_df["商品"] == "中国官方制造业PMI"]
+        return pmi_df
+
     def add_market_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
         """Add market-wide indicators like volatility and index trend"""
         try:
@@ -131,10 +152,9 @@ class DataManager:
             # Finalize indicators
             df["volatility"] = df["volatility"].ffill().bfill().fillna(0.2) # Default 20%
             
-            # Fetch market index (CSI 300) for trend overlay
+            # Fetch market index (CSI 300) for trend overlay (cached per-day)
             try:
-                # Use cached or fetch CSI 300
-                idx_df = ak.stock_zh_index_daily(symbol="sh000300")
+                idx_df = self._fetch_index_csi300()
                 if not idx_df.empty:
                     idx_df = idx_df.rename(columns={"date": "dt", "close": "idx_close"})
                     idx_df["dt"] = pd.to_datetime(idx_df["dt"])
@@ -159,6 +179,12 @@ class DataManager:
             if "volatility" not in df.columns: df["volatility"] = 0.2
             if "mkt_vol" not in df.columns: df["mkt_vol"] = 0.2
         return df
+
+    @_file_ttl_cache(".backtest_cache", "csi300", ttl_seconds=86400)
+    @retry(max_retries=2)
+    def _fetch_index_csi300(self) -> pd.DataFrame:
+        """Fetch CSI 300 daily index data, cached to disk."""
+        return ak.stock_zh_index_daily(symbol="sh000300")
 
     def _parse_chinese_num(self, val):
         """Convert '1.60亿' to 1.6e8, '94.52%' to 0.9452"""
@@ -261,7 +287,9 @@ class DataManager:
                     pass
             
             if total_shares and "close" in df.columns:
-                df["total_mv"] = df["close"] * total_shares
+                # Normalize to 亿元 (100M CNY) so strategy market_cap_min params
+                # (e.g. 500.0 = 500亿) match the data scale.
+                df["total_mv"] = df["close"] * total_shares / 1e8
             
             if "dividend_yield" not in df.columns:
                 df["dividend_yield"] = dividend_yield

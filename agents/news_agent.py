@@ -1,10 +1,9 @@
-from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import JsonOutputParser
 from tools.stock_data import get_stock_news, get_stock_report, get_board_news
 from tools.news_sources import fetch_rss_items, fetch_reddit_search_items, fetch_x_search_items
+from agents.llm import build_llm
 from state import AgentState
-import os
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import time
@@ -83,10 +82,6 @@ def news_agent_node(state: AgentState):
     
     # 从 state 中获取独立配置
     config = state.get("config", {})
-    model_name = config.get("model_name", "gpt-3.5-turbo")
-    temperature = config.get("temperature", 0.5)
-    max_tokens = config.get("max_tokens", 4096)
-    api_base = config.get("api_base", "https://api.openai.com/v1")
     api_key = config.get("api_key")
 
     # 2. 多源补充：RSS / Reddit / X（可选，默认关闭）
@@ -156,28 +151,7 @@ def news_agent_node(state: AgentState):
             "news_items": merged_news_items
         }
 
-    # 深度思考模式配置
-    # 针对 mimo-v2-flash 等不支持深度思考的模型，禁用该功能
-    safe_max_tokens = min(max_tokens, 4096)  # 限制最大 token 数以避免空响应
-    
-    llm_kwargs = {
-        "model": model_name, 
-        "temperature": temperature, 
-        "max_tokens": safe_max_tokens,
-        "top_p": 0.95,
-        "base_url": api_base,
-        "api_key": api_key
-    }
-    
-    # 只对支持深度思考的模型启用（排除 mimo-v2-flash）
-    if config.get("thinking_mode") and not any(x in model_name.lower() for x in ["mimo", "flash"]):
-        # 针对部分 Provider (如 DeepSeek) 的深度思考配置
-        llm_kwargs["extra_body"] = {"thinking": {"type": "enabled"}}
-        print(f"✅ 已启用深度思考模式")
-    else:
-        print(f"ℹ️ 已禁用深度思考模式（模型: {model_name}）")
-
-    llm = ChatOpenAI(**llm_kwargs)
+    llm = build_llm(config, max_tokens_cap=4096)
     parser = JsonOutputParser()
     
     today = datetime.now().strftime("%Y-%m-%d")

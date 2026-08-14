@@ -1,8 +1,7 @@
-from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import JsonOutputParser
+from agents.llm import build_llm
 from state import AgentState
-import os
 from datetime import datetime
 import re
 import json
@@ -37,11 +36,12 @@ def parse_risk_assessment_with_fallback(raw_content: str) -> dict:
         pass
     
     # 尝试 2: 正则提取 decision 和 reason
-    try:
-        decision_match = re.search(r'["\']?decision["\']?\s*[::]\s*["\']?([^"\',\n]+)["\']?', raw_content, re.IGNORECASE)
+    # 注意：未匹配到 decision 时必须继续 fallback，不能带着默认值返回
+    decision_match = re.search(r'["\']?decision["\']?\s*[::]\s*["\']?([^"\',\n]+)["\']?', raw_content, re.IGNORECASE)
+    if decision_match:
         reason_match = re.search(r'["\']?reason["\']?\s*[::]\s*["\']?([^"\']+)["\']?', raw_content, re.IGNORECASE | re.DOTALL)
         
-        decision = decision_match.group(1).strip() if decision_match else "驳回"
+        decision = decision_match.group(1).strip()
         reason = reason_match.group(1).strip() if reason_match else "无法解析风控理由,但基于格式要求强制通过"
         
         print(f"🔧 正则提取 - decision: {decision}, reason: {reason[:100]}")
@@ -56,8 +56,6 @@ def parse_risk_assessment_with_fallback(raw_content: str) -> dict:
         
         print(f"✅ 正则提取成功: decision={decision}")
         return {"decision": decision, "reason": reason}
-    except Exception as e:
-        print(f"❌ 正则提取失败: {e}")
     
     # 尝试 3: 查找关键词判断决策
     try:
@@ -91,37 +89,12 @@ def risk_agent_node(state: AgentState):
     
     # 从 state 中获取独立配置
     config = state.get("config", {})
-    model_name = config.get("model_name", "gpt-3.5-turbo")
-    temperature = config.get("temperature", 0.5)
-    max_tokens = config.get("max_tokens", 4096)
-    api_base = config.get("api_base", "https://api.openai.com/v1")
     api_key = config.get("api_key")
-    
+
     if not isinstance(api_key, str) or not api_key:
         return {"risk_assessment": "Error: Invalid API Key", "revision_needed": False, "consecutive_failures": state.get("consecutive_failures", 0)}
 
-    # 深度思考模式配置
-    # 针对 mimo-v2-flash 等不支持深度思考的模型,禁用该功能
-    safe_max_tokens = min(max_tokens, 4096)  # 限制最大 token 数以避免空响应
-    
-    llm_kwargs = {
-        "model": model_name, 
-        "temperature": temperature, 
-        "max_tokens": safe_max_tokens,
-        "top_p": 0.95,
-        "base_url": api_base,
-        "api_key": api_key
-    }
-    
-    # 只对支持深度思考的模型启用（排除 mimo-v2-flash）
-    if config.get("thinking_mode") and not any(x in model_name.lower() for x in ["mimo", "flash"]):
-        # 针对部分 Provider (如 DeepSeek) 的深度思考配置
-        llm_kwargs["extra_body"] = {"thinking": {"type": "enabled"}}
-        print(f"✅ 已启用深度思考模式")
-    else:
-        print(f"ℹ️ 已禁用深度思考模式（模型: {model_name}）")
-
-    llm = ChatOpenAI(**llm_kwargs)
+    llm = build_llm(config, max_tokens_cap=4096)
     
     parser = JsonOutputParser()
     
@@ -302,14 +275,12 @@ def risk_agent_node(state: AgentState):
             format_instructions=parser.get_format_instructions()
         )
         
-        # 添加短暂延迟,避免 API 限流
+        # 仅在有失败记录时退避等待，避免触发 API 限流；正常路径不等待
         import time
         if consecutive_failures > 0:
             delay = 2 ** consecutive_failures  # 指数退避
             print(f"⏳ 等待 {delay} 秒后重试...")
             time.sleep(delay)
-        else:
-            time.sleep(1)  # 默认延迟 1 秒
         
         raw_res = llm.invoke(prompt_str)
         

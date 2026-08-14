@@ -1,9 +1,8 @@
-from tools.stock_data import get_stock_hist_data, get_stock_financial_indicator, get_stock_fund_flow, get_stock_industry_comparison, get_board_hist_data
+from tools.stock_data import get_stock_financial_indicator, get_stock_fund_flow, get_stock_industry_comparison, get_board_hist_data
 from state import AgentState
 import pandas as pd
 import hashlib
 from datetime import datetime, timedelta
-import numpy as np
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import time
 from backtest.data import DataManager
@@ -107,23 +106,12 @@ def _fetch_market_sentiment():
         print(f"获取市场情绪失败: {e}")
         return {}
 
-def _sample_equity_curve(results: pd.DataFrame, max_points: int = 120) -> list:
-    if results is None or results.empty or "dt" not in results.columns or "equity" not in results.columns:
-        return []
-    curve = results[["dt", "equity"]].dropna()
-    if curve.empty:
-        return []
-    if len(curve) > max_points:
-        idx = np.linspace(0, len(curve) - 1, max_points).astype(int)
-        curve = curve.iloc[idx]
-    return [{"dt": d.isoformat() if hasattr(d, "isoformat") else str(d), "equity": float(e)} for d, e in zip(curve["dt"], curve["equity"])]
-
 def quant_agent_node(state: AgentState):
     """
     数据分析师：负责获取 K 线数据、财务指标及资金流向，并运行量化回测。
     """
     stock_code = state["stock_code"]
-    stock_name = state["stock_name"]
+    stock_name = state.get("stock_name", stock_code)
     is_sector = state.get("is_sector", False)
     
     # 检查是否有错误或中断信号
@@ -186,18 +174,25 @@ def quant_agent_node(state: AgentState):
         # 等待所有任务完成
         for future in as_completed(futures.values()):
             try:
-                result = future.result()
+                future.result()
             except Exception as e:
                 print(f"⚠️ 并行任务失败: {e}")
     
     # 收集结果
-    market_sentiment = futures['market_sentiment'].result()
+    def _safe_result(key, default):
+        try:
+            return futures[key].result()
+        except Exception as e:
+            print(f"⚠️ 并行任务 {key} 失败: {e}")
+            return default
+    
+    market_sentiment = _safe_result('market_sentiment', {})
     
     if not is_sector:
-        financials = futures['financials'].result()
-        fund_flow = futures['fund_flow'].result()
-        industry_data = futures['industry_data'].result()
-        valuation_history = futures['valuation_history'].result()
+        financials = _safe_result('financials', {})
+        fund_flow = _safe_result('fund_flow', {})
+        industry_data = _safe_result('industry_data', {})
+        valuation_history = _safe_result('valuation_history', {})
     
     elapsed_time = time.time() - start_time
     print(f"✅ 并行数据获取完成，耗时: {elapsed_time:.2f}秒")
@@ -239,7 +234,7 @@ def quant_agent_node(state: AgentState):
             rsv = (df["close"] - low_list) / (high_list - low_list) * 100
             df["KDJ_K"] = rsv.ewm(com=2).mean()
             df["KDJ_D"] = df["KDJ_K"].ewm(com=2).mean()
-            df["KDJ_J" ] = 3 * df["KDJ_K"] - 2 * df["KDJ_D"]
+            df["KDJ_J"] = 3 * df["KDJ_K"] - 2 * df["KDJ_D"]
             
             # 6. 成交量分析
             df["VMA5"] = df["volume"].rolling(window=5).mean()
@@ -276,7 +271,7 @@ def quant_agent_node(state: AgentState):
             upper_shadow = last_row["high"] - max(last_row["open"], last_row["close"])
             lower_shadow = min(last_row["open"], last_row["close"]) - last_row["low"]
             
-            prev_body = prev_row["close" ] - prev_row["open"]
+            prev_body = prev_row["close"] - prev_row["open"]
             
             # 1. 锤子线/倒锤子线 (底部信号)
             if lower_shadow > 2 * abs_body and upper_shadow < 0.1 * abs_body:
@@ -290,7 +285,7 @@ def quant_agent_node(state: AgentState):
                 
             # 3. 看涨/看跌吞没
             if last_row["close"] > last_row["open"] and prev_row["close"] < prev_row["open"]:
-                if last_row["close"] > prev_row["open"] and last_row["open" ] < prev_row["close"]:
+                if last_row["close"] > prev_row["open"] and last_row["open"] < prev_row["close"]:
                     patterns.append("看涨吞没 (强力反转)")
             if last_row["close"] < last_row["open"] and prev_row["close"] > prev_row["open"]:
                 if last_row["close"] < prev_row["open"] and last_row["open"] > prev_row["close"]:
@@ -407,7 +402,9 @@ def quant_agent_node(state: AgentState):
                     try:
                         strategy = strategy_cls(params=params)
                         run_results = engine.run(strategy, df)
-                        metrics = PerformanceAnalytics.calculate_metrics(run_results)
+                        metrics = PerformanceAnalytics.calculate_metrics(
+                            run_results, initial_cash=engine.initial_cash
+                        )
                         strategy_params = strategy.params.model_dump()
 
                         # 保存回测记录
@@ -423,12 +420,6 @@ def quant_agent_node(state: AgentState):
                         formatted = _format_params(strategy_params)
                         if formatted:
                             label = f"{name} ({formatted})"
-                        
-                        trade_signals = engine.extract_trade_signals(run_results)
-                        signals_dict = [s.to_dict() for s in trade_signals]
-                        
-                        buy_count = len([s for s in signals_dict if s["type"] == "BUY"])
-                        sell_count = len([s for s in signals_dict if s["type"] == "SELL"])
 
                         backtest_results.append({
                             "name": name,
@@ -436,10 +427,6 @@ def quant_agent_node(state: AgentState):
                             "params": strategy_params,
                             "metrics": metrics,
                             "summary": PerformanceAnalytics.get_summary_report(metrics),
-                            "curve": _sample_equity_curve(run_results, max_points=120),
-                            "signals": signals_dict,
-                            "buy_count": buy_count,
-                            "sell_count": sell_count,
                         })
                         runs += 1
                     except Exception as e:

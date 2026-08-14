@@ -1,5 +1,4 @@
 import pandas as pd
-import numpy as np
 
 def calculate_kdj(df: pd.DataFrame, n: int = 9, m1: int = 3, m2: int = 3) -> pd.DataFrame:
     """
@@ -14,23 +13,6 @@ def calculate_kdj(df: pd.DataFrame, n: int = 9, m1: int = 3, m2: int = 3) -> pd.
     df_kdj['d'] = df_kdj['k'].ewm(com=m2-1, adjust=False).mean()
     df_kdj['j'] = 3 * df_kdj['k'] - 2 * df_kdj['d']
     return df_kdj
-
-def calculate_atr(df: pd.DataFrame, n: int = 14) -> pd.Series:
-    """
-    Calculate Average True Range (ATR)
-    """
-    high = df['high']
-    low = df['low']
-    prev_close = df['close'].shift(1)
-    
-    tr = pd.concat([
-        high - low,
-        (high - prev_close).abs(),
-        (low - prev_close).abs()
-    ], axis=1).max(axis=1)
-    
-    atr = tr.rolling(window=n).mean()
-    return atr
 
 def calculate_rsi(series: pd.Series, period: int = 14) -> pd.Series:
     """

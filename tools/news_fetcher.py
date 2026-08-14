@@ -131,19 +131,29 @@ class News10jqkaFetcher:
             return None
 
 
+_fetcher_instance = None
+
+
+def get_fetcher() -> "News10jqkaFetcher":
+    """Lazy singleton fetcher — reuses the requests.Session (connection pool)."""
+    global _fetcher_instance
+    if _fetcher_instance is None:
+        _fetcher_instance = News10jqkaFetcher()
+    return _fetcher_instance
+
+
 def get_10jqka_news(limit: int = 20, page: int = 1) -> List[Dict]:
     """
     获取同花顺实时新闻
-    
+
     Args:
         limit: 获取新闻数量限制
         page: 页码，默认为1
-        
+
     Returns:
         新闻列表
     """
-    fetcher = News10jqkaFetcher()
-    return fetcher.fetch_news(limit, page)
+    return get_fetcher().fetch_news(limit, page)
 
 
 if __name__ == "__main__":

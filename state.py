@@ -20,7 +20,7 @@ class AgentState(TypedDict):
     
     # 决策层
     strategy_report: str
-    risk_assessment: str
+    risk_assessment: Dict[str, Any]  # 结构化结果: decision/reason/review_count/review_date
     
     # 控制流
     messages: Annotated[List[str], operator.add]

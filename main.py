@@ -64,37 +64,19 @@ setup_utf8_encoding()
 # 模型探测缓存文件路径
 MODEL_CACHE_FILE = Path(__file__).parent / ".model_cache.json"
 
-
-def load_model_cache():
-    """
-    加载模型探测缓存
-
-    从缓存文件中加载之前探测到的可用模型信息。
-    如果缓存文件不存在或已过期(超过24小时),返回 None。
-
-    Returns:
-        Optional[str]: 可用的模型名称,如果缓存无效则返回 None
-    """
+def main():
+    logger.info("AlphaFlow CLI 启动")
     try:
-        if not MODEL_CACHE_FILE.exists():
-            logger.debug("模型缓存文件不存在")
-            return None
-        
-        with open(MODEL_CACHE_FILE, 'r', encoding='utf-8') as f:
-            cache_data = json.load(f)
-        
-        # 检查缓存是否过期（24小时）
-        cache_time = datetime.fromisoformat(cache_data.get("cache_time", ""))
-        if datetime.now() - cache_time > timedelta(hours=24):
-            logger.info("模型探测缓存已过期")
-            return None
-        
-        model_name = cache_data.get('model_name', 'unknown')
-        logger.info(f"使用模型探测缓存: {model_name}")
-        return model_name
+        args = sys.argv[1:]
+        if not args:
+            print("请提供股票代码或名称，例如: python main.py --stock 600519")
+            return
+
+        stock_name = args[1] if args[0] == "--stock" else args[0]
+        run_alpha_flow(stock_name)
     except Exception as e:
-        logger.error(f"加载模型缓存失败: {e}")
-        return None
+        logger.error(f"程序运行出错: {e}")
+
 
 
 def save_model_cache(model_name: str):

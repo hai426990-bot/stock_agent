@@ -2,43 +2,25 @@ import akshare as ak
 import pandas as pd
 from datetime import datetime, timedelta
 import time
-from functools import wraps, lru_cache
+from functools import wraps
 import json
 import os
 import hashlib
 from typing import Any, Callable, Optional, Dict, Union
-
-def retry(max_retries=3, delay=1, backoff=2):
-    """
-    重试装饰器，用于 AkShare 接口请求
-    """
-    def decorator(func):
-        @wraps(func)
-        def wrapper(*args, **kwargs):
-            retries = 0
-            current_delay = delay
-            while retries < max_retries:
-                try:
-                    return func(*args, **kwargs)
-                except Exception as e:
-                    retries += 1
-                    if retries == max_retries:
-                        print(f"❌ {func.__name__} 达到最大重试次数: {e}")
-                        raise e
-                    print(f"⚠️ {func.__name__} 请求失败 (第 {retries} 次): {e}, {current_delay}s 后重试...")
-                    time.sleep(current_delay)
-                    current_delay *= backoff
-            return None
-        return wrapper
-    return decorator
+from tools.retry import retry
 
 class TTLCache:
     """
     文件持久化的 TTL 缓存
     """
+    # 磁盘写入节流间隔（秒）：避免每次 set 都全量重写缓存文件
+    SAVE_INTERVAL = 10.0
+
     def __init__(self, cache_file: str = ".akshare_cache.json"):
         self.cache_file = cache_file
         self.cache = self._load_cache()
+        self._dirty = False
+        self._last_save = 0.0
     
     def _load_cache(self) -> Dict[str, Any]:
         """加载缓存文件"""
@@ -47,32 +29,16 @@ class TTLCache:
                 with open(self.cache_file, 'r', encoding='utf-8') as f:
                     cache_data = json.load(f)
                 
-                # 处理 DataFrame 反序列化
+                # 反序列化缓存条目。注意：字符串值保持原样，不能尝试
+                # pd.to_datetime 转换——数字型字符串（如 "600519"、价格）
+                # 会被误解析成日期，导致缓存数据永久损坏。
                 deserialized_cache = {}
                 for key, entry in cache_data.items():
                     deserialized_entry = {}
                     for k, v in entry.items():
                         if k == 'data' and isinstance(v, dict) and v.get('type') == 'DataFrame':
-                            # 将字典转换回 DataFrame
                             df_data = v.get('data', [])
-                            # 将 ISO 格式字符串转换回 Timestamp
-                            processed_data = []
-                            for row in df_data:
-                                processed_row = {}
-                                for col_key, col_value in row.items():
-                                    # 尝试将字符串转换为 Timestamp
-                                    if isinstance(col_value, str):
-                                        try:
-                                            # 尝试解析为日期时间
-                                            processed_row[col_key] = pd.to_datetime(col_value)
-                                        except:
-                                            # 如果解析失败，保持原样
-                                            processed_row[col_key] = col_value
-                                    else:
-                                        processed_row[col_key] = col_value
-                                processed_data.append(processed_row)
-                            
-                            deserialized_entry[k] = pd.DataFrame(processed_data)
+                            deserialized_entry[k] = pd.DataFrame(df_data)
                         else:
                             deserialized_entry[k] = v
                     deserialized_cache[key] = deserialized_entry
@@ -84,7 +50,14 @@ class TTLCache:
         return {}
     
     def _save_cache(self):
-        """保存缓存到文件"""
+        """保存缓存到文件（节流：距上次保存不足 SAVE_INTERVAL 秒则跳过）"""
+        now = time.time()
+        if now - self._last_save < self.SAVE_INTERVAL:
+            return
+        self._last_save = now
+        if not self._dirty:
+            return
+        self._dirty = False
         try:
             # 处理 DataFrame 序列化
             serializable_cache = {}
@@ -143,13 +116,14 @@ class TTLCache:
         return None, None
     
     def set(self, func_name: str, args: tuple, kwargs: dict, data: Any):
-        """设置缓存"""
+        """设置缓存（内存立即生效，磁盘节流写入）"""
         key = self._generate_key(func_name, args, kwargs)
         self.cache[key] = {
             'data': data,
             'timestamp': datetime.now().isoformat(),
             'function': func_name
         }
+        self._dirty = True
         self._save_cache()
     
     def clear_expired(self, ttl_seconds: int):
