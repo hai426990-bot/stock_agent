@@ -11,6 +11,7 @@ class AnalysisReport(models.Model):
     class Status(models.TextChoices):
         PENDING = "pending", "Pending"
         RUNNING = "running", "Running"
+        AWAITING_APPROVAL = "awaiting_approval", "Awaiting Approval"
         COMPLETED = "completed", "Completed"
         FAILED = "failed", "Failed"
 
@@ -24,7 +25,7 @@ class AnalysisReport(models.Model):
     sector_cons = models.JSONField(default=list)
 
     status = models.CharField(
-        max_length=16, choices=Status.choices, default=Status.PENDING, db_index=True
+        max_length=32, choices=Status.choices, default=Status.PENDING, db_index=True
     )
     # Full AgentState snapshot of the decision + data layers
     # (strategy_report, risk_assessment, quant_data, technical_indicators,

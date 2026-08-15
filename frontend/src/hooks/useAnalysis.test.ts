@@ -1,18 +1,20 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
 import { renderHook, act, waitFor } from "@testing-library/react"
 import { useAnalysis } from "./useAnalysis"
-import { createAnalysis, getAnalysisDetail } from "../api/analysis"
+import { createAnalysis, getAnalysisDetail, submitApproval } from "../api/analysis"
 
 vi.mock("../api/analysis", () => ({
   createAnalysis: vi.fn(),
   getAnalysisDetail: vi.fn(),
   listAnalyses: vi.fn(),
   deleteAnalysis: vi.fn(),
+  submitApproval: vi.fn(),
   buildStreamUrl: vi.fn(),
 }))
 
 const mockCreate = vi.mocked(createAnalysis)
 const mockDetail = vi.mocked(getAnalysisDetail)
+const mockSubmit = vi.mocked(submitApproval)
 
 const CREATE_RESP = {
   job_id: "job-1",
@@ -25,6 +27,7 @@ const CREATE_RESP = {
 beforeEach(() => {
   mockCreate.mockReset()
   mockDetail.mockReset()
+  mockSubmit.mockReset()
 })
 
 describe("useAnalysis", () => {
@@ -102,5 +105,68 @@ describe("useAnalysis", () => {
     expect(result.current.jobId).toBeNull()
     expect(result.current.progress).toEqual([])
     expect(result.current.detail).toBeNull()
+  })
+
+  it("handleApproval 进入 awaiting_approval 并记录审批请求", () => {
+    const { result } = renderHook(() => useAnalysis())
+    act(() => {
+      result.current.handleApproval({ decision: "通过", reason: "逻辑自洽" })
+    })
+    expect(result.current.status).toBe("awaiting_approval")
+    expect(result.current.approvalRequest).toEqual({ decision: "通过", reason: "逻辑自洽" })
+  })
+
+  it("submitVerdict 调用后端并恢复 running", async () => {
+    mockCreate.mockResolvedValue(CREATE_RESP)
+    mockSubmit.mockResolvedValue({ message: "ok", approved: true })
+    const { result } = renderHook(() => useAnalysis())
+    await act(async () => {
+      await result.current.startAnalysis("600519")
+    })
+    act(() => {
+      result.current.handleApproval({ decision: "通过", reason: "ok" })
+    })
+    expect(result.current.status).toBe("awaiting_approval")
+
+    let ok = false
+    await act(async () => {
+      ok = await result.current.submitVerdict(false, "风险提示不足")
+    })
+    expect(ok).toBe(true)
+    expect(mockSubmit).toHaveBeenCalledWith("job-1", { approved: false, comment: "风险提示不足" })
+    expect(result.current.status).toBe("running")
+    expect(result.current.approvalRequest).toBeNull()
+  })
+
+  it("submitVerdict 失败保留审批请求并记录错误", async () => {
+    mockCreate.mockResolvedValue(CREATE_RESP)
+    mockSubmit.mockRejectedValue(new Error("网络错误"))
+    const { result } = renderHook(() => useAnalysis())
+    await act(async () => {
+      await result.current.startAnalysis("600519")
+    })
+    act(() => {
+      result.current.handleApproval({ decision: "通过", reason: "ok" })
+    })
+
+    let ok = true
+    await act(async () => {
+      ok = await result.current.submitVerdict(true)
+    })
+    expect(ok).toBe(false)
+    expect(result.current.error).toBe("网络错误")
+    expect(result.current.approvalRequest).not.toBeNull()
+  })
+
+  it("handleApprovalResumed 恢复 running 并清除审批请求", () => {
+    const { result } = renderHook(() => useAnalysis())
+    act(() => {
+      result.current.handleApproval({ decision: "通过", reason: "ok" })
+    })
+    act(() => {
+      result.current.handleApprovalResumed()
+    })
+    expect(result.current.status).toBe("running")
+    expect(result.current.approvalRequest).toBeNull()
   })
 })

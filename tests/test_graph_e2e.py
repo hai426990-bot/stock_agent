@@ -181,6 +181,11 @@ def _initial_state():
     }
 
 
+def _invoke(app, state, thread_id="e2e"):
+    """invoke with the thread config the checkpointer requires."""
+    return app.invoke(state, config={"configurable": {"thread_id": thread_id}})
+
+
 @contextmanager
 def _patched_env(fake_llm, telegraph_news=None, news_items=None):
     """Mock every network/LLM dependency the real graph touches."""
@@ -228,7 +233,7 @@ def test_e2e_full_pipeline_telegraph_wired_into_report():
     """B1 regression: telegraph analysis must flow into state AND the report."""
     fake, strategy, risk = _make_llm()
     with _patched_env(fake):
-        final = create_alpha_flow_graph().invoke(_initial_state())
+        final = _invoke(create_alpha_flow_graph(), _initial_state())
 
     assert not final.get("error"), final.get("error")
     # B1: telegraph data survives the graph and is JSON-shaped
@@ -261,7 +266,7 @@ def test_e2e_revision_loop_regenerates_report():
         ("", strategy),
     ])
     with _patched_env(fake):
-        final = create_alpha_flow_graph().invoke(_initial_state())
+        final = _invoke(create_alpha_flow_graph(), _initial_state())
 
     assert final["count"] == 2
     assert final["revision_needed"] is False
@@ -281,7 +286,7 @@ def test_e2e_news_parse_failure_degrades_report():
         ("", strategy),
     ])
     with _patched_env(fake):
-        final = create_alpha_flow_graph().invoke(_initial_state())
+        final = _invoke(create_alpha_flow_graph(), _initial_state())
 
     assert final["news_parse_success"] is False
     assert "资讯降级已验证" in final["strategy_report"]  # strategy saw the flag
@@ -299,7 +304,7 @@ def test_e2e_telegraph_outage_does_not_block_pipeline():
         ("", strategy),
     ])
     with _patched_env(fake, telegraph_news=[]):
-        final = create_alpha_flow_graph().invoke(_initial_state())
+        final = _invoke(create_alpha_flow_graph(), _initial_state())
 
     assert not final.get("error")
     assert final["telegraph_analysis"]["summary"] == "暂无同花顺新闻数据"
@@ -334,8 +339,116 @@ def test_e2e_telegraph_fetch_error_does_not_block_pipeline():
          patch("agents.quant_agent._fetch_industry_data", return_value={}), \
          patch("agents.quant_agent._fetch_valuation_history", return_value={}), \
          patch("agents.quant_agent._fetch_market_sentiment", return_value={}):
-        final = create_alpha_flow_graph().invoke(_initial_state())
+        final = _invoke(create_alpha_flow_graph(), _initial_state())
 
     assert not final.get("error")
     assert "获取同花顺新闻失败" in final["telegraph_analysis"]["summary"]
     assert final["risk_assessment"]["decision"] == "通过"
+
+
+# ---------------------------------------------------------------------------
+# Human-in-the-loop approval gate tests (checkpointer + interrupt/Command)
+# ---------------------------------------------------------------------------
+
+def _approval_state(enabled=True, rejections=0):
+    """initial state with the approval gate enabled (and no LLM needed —
+    risk passes, so the gate is reached directly after news/quant/telegraph)."""
+    state = _initial_state()
+    state["config"] = {
+        **_agent_config(),
+        "human_approval_enabled": enabled,
+        "human_approval_timeout": 600,
+        "human_approval_max_rejections": 3,
+    }
+    state["approval_rejections"] = rejections
+    return state
+
+
+def _approval_env(fake):
+    return _patched_env(fake)
+
+
+def test_e2e_approval_disabled_passes_through():
+    """Gate disabled (default) -> human_approved True, no interrupt."""
+    fake, strategy, _ = _make_llm()
+    with _approval_env(fake):
+        final = _invoke(create_alpha_flow_graph(), _approval_state(enabled=False))
+    assert final["human_approved"] is True
+    assert "__interrupt__" not in final
+    assert final["risk_assessment"]["decision"] == "通过"
+
+
+def test_e2e_approval_interrupts_then_approve():
+    """Gate enabled -> run pauses with __interrupt__; resume approved -> END."""
+    fake, strategy, _ = _make_llm()
+    with _approval_env(fake):
+        app = create_alpha_flow_graph()
+        config = {"configurable": {"thread_id": "t-approve"}}
+        paused = app.invoke(_approval_state(), config=config)
+
+    assert "__interrupt__" in paused
+    payload = paused["__interrupt__"][0].value
+    assert payload["decision"] == "通过"
+
+    with _approval_env(fake):
+        final = app.invoke(
+            __import__("langgraph.types", fromlist=["Command"]).Command(
+                resume={"approved": True, "comment": "同意"}),
+            config=config,
+        )
+    assert final["human_approved"] is True
+    assert final["risk_assessment"]["decision"] == "通过"
+    assert strategy.calls == 1  # 未触发修订
+
+
+def test_e2e_approval_rejected_loops_to_revision():
+    """Reject -> back to strategy with the comment; new report; gate again."""
+    strategy = StrategyCounter()
+    risk = RiskCounter(rejections=0)
+    fake = FakeChatModel([
+        ("首席风险官", risk),
+        ("资讯侦察兵", _news_json_handler),
+        ("市场动态分析师", _telegraph_json_handler),
+        ("", strategy),
+    ])
+    from langgraph.types import Command
+
+    with _approval_env(fake):
+        app = create_alpha_flow_graph()
+        config = {"configurable": {"thread_id": "t-reject"}}
+        paused = app.invoke(_approval_state(), config=config)
+        assert "__interrupt__" in paused
+
+        # 驳回 -> 带意见回策略层修订 -> 风控再通过 -> 再次挂起等审批
+        paused2 = app.invoke(Command(resume={"approved": False, "comment": "风险提示不足"}), config=config)
+        assert "__interrupt__" in paused2
+        assert paused2["approval_rejections"] == 1
+        assert paused2["approval_comment"] == "风险提示不足"
+        assert strategy.calls == 2  # 修订了一次
+
+        final = app.invoke(Command(resume={"approved": True, "comment": "同意"}), config=config)
+    assert final["human_approved"] is True
+    assert final["strategy_report"].startswith("# 投资建议报告（第2次生成）")
+
+
+def test_e2e_approval_rejection_cap_auto_passes():
+    """驳回次数超过上限后自动放行，避免人机循环死锁。"""
+    from langgraph.types import Command
+
+    strategy = StrategyCounter()
+    fake = FakeChatModel([
+        ("首席风险官", RiskCounter(rejections=0)),
+        ("资讯侦察兵", _news_json_handler),
+        ("市场动态分析师", _telegraph_json_handler),
+        ("", strategy),
+    ])
+    with _approval_env(fake):
+        app = create_alpha_flow_graph()
+        config = {"configurable": {"thread_id": "t-cap"}}
+        state = _approval_state(rejections=3)  # 已驳回 3 次（上限 3）
+        paused = app.invoke(state, config=config)
+        assert "__interrupt__" in paused
+        final = app.invoke(Command(resume={"approved": False, "comment": "继续驳回"}), config=config)
+    # 第 4 次驳回 -> 超过上限自动放行 -> END
+    assert final["human_approved"] is True
+    assert final["approval_rejections"] == 4

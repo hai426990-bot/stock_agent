@@ -34,6 +34,9 @@ class AgentState(TypedDict, total=False):
     messages: Annotated[List[str], operator.add]
     revision_needed: bool
     count: int  # 记录循环次数防止死循环
+    human_approved: bool  # 人工审批是否通过（审批门节点）
+    approval_rejections: Annotated[int, lambda x, y: y]  # 人工驳回次数（超过上限自动放行）
+    approval_comment: str  # 审批意见（驳回时带给策略层修订）
     reasoning_content: Annotated[List[Dict[str, str]], operator.add]  # 存储各 Agent 的思考过程
     config: Dict[str, Any]  # 存储每个用户独立的 API 和模型配置
     error: str  # 存储节点错误信息，用于中止流程

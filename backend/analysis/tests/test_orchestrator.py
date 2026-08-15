@@ -10,6 +10,8 @@ Coverage:
   - stream_events replay / resume_from / done / deleted-report / timeout
 """
 import asyncio
+import threading
+import time
 from unittest.mock import patch
 
 from django.test import TransactionTestCase
@@ -20,14 +22,22 @@ from backend.analysis.services.state_builder import build_initial_state
 
 
 class FakeApp:
-    """Mimics the compiled LangGraph: app.stream(initial_state) yields
-    {node_name: state_update} dicts."""
+    """Mimics the compiled LangGraph: app.stream(initial_state, config) yields
+    {node_name: state_update} dicts.
 
-    def __init__(self, events):
+    phases: list of event-lists; each stream() call consumes the next phase
+    (used to model interrupt -> Command(resume=...) continuation).
+    """
+
+    def __init__(self, events=None, phases=None):
         self.events = events
+        self.phases = phases or [events or []]
+        self.calls = 0
 
-    def stream(self, initial_state):
-        for ev in self.events:
+    def stream(self, initial_state, config=None):
+        phase = self.phases[min(self.calls, len(self.phases) - 1)]
+        self.calls += 1
+        for ev in phase:
             yield ev
 
 
@@ -60,7 +70,8 @@ class OrchestratorTests(TransactionTestCase):
             "fear_greed_index", "telegraph_news", "telegraph_analysis",
             "quant_data", "technical_indicators",
             "strategy_report", "risk_assessment", "messages",
-            "revision_needed", "count", "reasoning_content",
+            "revision_needed", "count", "human_approved", "approval_rejections",
+            "approval_comment", "reasoning_content",
             "config", "error", "consecutive_failures",
         }
         self.assertEqual(expected, set(state.keys()), f"missing: {expected - set(state.keys())}")
@@ -207,3 +218,101 @@ class OrchestratorEdgeCaseTests(TransactionTestCase):
             return out
         events = asyncio.run(collect())
         self.assertEqual(events[-1]["event"], "done")
+
+
+class ApprovalInterruptTests(TransactionTestCase):
+    """Worker-level tests for the human-approval interrupt/resume loop."""
+
+    def setUp(self):
+        self.report = AnalysisReport.objects.create(
+            query="600519", stock_code="600519", stock_name="贵州茅台",
+            is_sector=False, status=AnalysisReport.Status.PENDING,
+        )
+
+    def _interrupt_chunk(self, payload):
+        """{node_name: state_update} chunk shaped like a LangGraph interrupt."""
+        interrupt = type("Interrupt", (), {"value": payload})()
+        return {"__interrupt__": (interrupt,)}
+
+    def test_interrupt_waits_then_approve_completes(self):
+        """Worker pauses at the gate; submit_approval resumes and finishes."""
+        fake = FakeApp(phases=[
+            [
+                {"supervisor": {}},
+                {"news_node": {"news_analysis": "ok"}},
+                self._interrupt_chunk({"decision": "通过", "reason": "逻辑自洽"}),
+            ],
+            [
+                {"strategy_node": {"strategy_report": "final report"}},
+                {"risk_node": {"risk_assessment": {"decision": "通过"}, "revision_needed": False}},
+            ],
+        ])
+        with patch.object(orchestrator, "get_graph", return_value=fake):
+            t = threading.Thread(target=orchestrator._run_graph, args=(str(self.report.id),))
+            t.start()
+            # 等待 worker 进入等待审批状态
+            deadline = time.time() + 10
+            while time.time() < deadline:
+                self.report.refresh_from_db()
+                if self.report.status == AnalysisReport.Status.AWAITING_APPROVAL:
+                    break
+                time.sleep(0.05)
+            self.assertEqual(self.report.status, AnalysisReport.Status.AWAITING_APPROVAL)
+            self.assertTrue(orchestrator.is_awaiting_approval(str(self.report.id)))
+
+            self.assertTrue(orchestrator.submit_approval(
+                str(self.report.id), {"approved": True, "comment": "同意"}))
+            t.join(timeout=10)
+            self.assertFalse(t.is_alive())
+
+        self.report.refresh_from_db()
+        self.assertEqual(self.report.status, AnalysisReport.Status.COMPLETED)
+        self.assertEqual(self.report.final_state.get("strategy_report"), "final report")
+        # 审批事件已持久化, 供 SSE 重放
+        events = list(AnalysisNodeEvent.objects.filter(report=self.report).order_by("seq"))
+        nodes = [(e.node, e.status) for e in events]
+        self.assertIn(("approval_gate", "waiting"), nodes)
+        self.assertIn(("approval_gate", "resumed"), nodes)
+
+    def test_interrupt_timeout_auto_rejects_and_continues(self):
+        """Timeout -> auto-reject verdict -> graph continues and completes."""
+        fake = FakeApp(phases=[
+            [
+                {"supervisor": {}},
+                self._interrupt_chunk({"decision": "通过", "reason": "r"}),
+            ],
+            [
+                {"strategy_node": {"strategy_report": "revised"}},
+                {"risk_node": {"risk_assessment": {"decision": "通过"}, "revision_needed": False}},
+            ],
+        ])
+        with patch.object(orchestrator, "get_graph", return_value=fake), \
+             patch.object(orchestrator, "_wait_for_approval", return_value=None):
+            orchestrator._run_graph(str(self.report.id))
+        self.report.refresh_from_db()
+        self.assertEqual(self.report.status, AnalysisReport.Status.COMPLETED)
+
+    def test_submit_approval_unknown_job_returns_false(self):
+        self.assertFalse(orchestrator.submit_approval(
+            str(self.report.id), {"approved": True}))
+
+    def test_is_awaiting_approval_registry_lifecycle(self):
+        """submit_approval wakes the worker; registries are cleaned up."""
+        fake = FakeApp(phases=[
+            [self._interrupt_chunk({"decision": "通过"})],
+            [{"strategy_node": {"strategy_report": "s"}}, {"risk_node": {"revision_needed": False}}],
+        ])
+        with patch.object(orchestrator, "get_graph", return_value=fake):
+            t = threading.Thread(target=orchestrator._run_graph, args=(str(self.report.id),))
+            t.start()
+            deadline = time.time() + 10
+            while time.time() < deadline:
+                self.report.refresh_from_db()
+                if self.report.status == AnalysisReport.Status.AWAITING_APPROVAL:
+                    break
+                time.sleep(0.05)
+            self.assertTrue(orchestrator.submit_approval(str(self.report.id), {"approved": True}))
+            t.join(timeout=10)
+        # 注册表已清理: 后续提交返回 False
+        self.assertFalse(orchestrator.is_awaiting_approval(str(self.report.id)))
+        self.assertFalse(orchestrator.submit_approval(str(self.report.id), {"approved": True}))

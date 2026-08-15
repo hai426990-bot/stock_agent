@@ -53,13 +53,22 @@ export interface RiskAssessment {
   review_date?: string
 }
 
+export interface ApprovalPayload {
+  decision: string
+  reason: string
+  review_count?: number
+  rejections?: number
+}
+
 export interface NodeEvent {
-  event: "node" | "done" | "error"
+  event: "node" | "done" | "error" | "approval" | "approval_resumed"
   seq?: number
   node?: string
   status?: "completed" | "error"
   message?: string
   report_id?: string
+  payload?: ApprovalPayload
+  verdict?: { approved: boolean; comment?: string }
 }
 
 export interface AnalysisDetail {
@@ -129,4 +138,4 @@ export interface AppConfig {
   }
 }
 
-export type AnalysisStatus = "pending" | "running" | "completed" | "failed"
+export type AnalysisStatus = "pending" | "running" | "awaiting_approval" | "completed" | "failed"

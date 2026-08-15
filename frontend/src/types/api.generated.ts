@@ -289,6 +289,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/analysis/{job_id}/approval": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Analysis Approval
+         * @description Human-in-the-loop: deliver the approval verdict to a paused worker.
+         *
+         *     The worker is blocked at the approval gate (report status
+         *     "awaiting_approval"); this wakes it with {"approved", "comment"}.
+         *     Returns 404 for unknown jobs and 409 when nobody is awaiting approval.
+         */
+        post: operations["backend_analysis_api_analysis_approval"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/backtests/": {
         parameters: {
             query?: never;
@@ -537,6 +561,19 @@ export interface components {
             created_at: string;
             /** Updated At */
             updated_at: string;
+        };
+        /** ApprovalIn */
+        ApprovalIn: {
+            /**
+             * Approved
+             * @default true
+             */
+            approved: boolean;
+            /**
+             * Comment
+             * @default
+             */
+            comment: string;
         };
         /** BacktestListOut */
         BacktestListOut: {
@@ -945,6 +982,30 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    backend_analysis_api_analysis_approval: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ApprovalIn"];
+            };
+        };
         responses: {
             /** @description OK */
             200: {

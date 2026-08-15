@@ -470,6 +470,9 @@ def quant_agent_node(state: AgentState):
                 "market_sentiment": market_sentiment,
                 "backtest_candidates": backtest_results # 传递候选策略集
             }
+            # 状态必须 msgpack/JSON-safe（LangGraph checkpoint 序列化要求）
+            from tools.json_safe import to_json_safe
+            quant_data = to_json_safe(quant_data)
             
             return {
                 "quant_data": quant_data,

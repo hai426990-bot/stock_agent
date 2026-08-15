@@ -5,17 +5,18 @@ AnalysisReport, and kicks off the LangGraph run in a background thread.
 GET /{id}/stream is an SSE endpoint that drains orchestrator.stream_events().
 """
 import json
-import uuid
 from typing import Optional
 
 from django.http import StreamingHttpResponse, JsonResponse, Http404
 from django.shortcuts import get_object_or_404
-from ninja import Router
+from ninja import Router, Schema
 
 from backend.analysis.models import AnalysisReport
 from backend.analysis.schemas import AnalysisCreateIn, AnalysisCreateOut, AnalysisListItem, AnalysisDetailOut
 from backend.analysis.services.entity_resolver import resolve_entity
-from backend.analysis.services.orchestrator import start_analysis, stream_events
+from backend.analysis.services.orchestrator import (
+    start_analysis, stream_events, submit_approval, is_awaiting_approval, _is_valid_uuid,
+)
 from backend.configapp.services.config_bridge import mask_config, get_effective_config
 
 router = Router()
@@ -106,15 +107,6 @@ async def analysis_stream(request, job_id: str):
     return resp
 
 
-def _is_valid_uuid(value: str) -> bool:
-    """True if value parses as a UUID (avoids ValueError -> 500 on bad ids)."""
-    try:
-        uuid.UUID(str(value))
-        return True
-    except (ValueError, TypeError, AttributeError):
-        return False
-
-
 @router.get("/{job_id}", response=AnalysisDetailOut)
 def analysis_detail(request, job_id: str):
     """Full AnalysisReport (status + final_state)."""
@@ -122,6 +114,31 @@ def analysis_detail(request, job_id: str):
         raise Http404
     report = get_object_or_404(AnalysisReport, id=job_id)
     return _serialize_detail(report)
+
+
+class ApprovalIn(Schema):
+    approved: bool = True
+    comment: str = ""
+
+
+@router.post("/{job_id}/approval")
+def analysis_approval(request, job_id: str, payload: ApprovalIn):
+    """Human-in-the-loop: deliver the approval verdict to a paused worker.
+
+    The worker is blocked at the approval gate (report status
+    "awaiting_approval"); this wakes it with {"approved", "comment"}.
+    Returns 404 for unknown jobs and 409 when nobody is awaiting approval.
+    """
+    if not _is_valid_uuid(job_id):
+        return JsonResponse({"detail": "invalid job_id"}, status=404)
+    if not AnalysisReport.objects.filter(id=job_id).exists():
+        return JsonResponse({"detail": "report not found"}, status=404)
+    if not is_awaiting_approval(job_id):
+        return JsonResponse(
+            {"detail": "该任务当前不处于等待审批状态"}, status=409,
+        )
+    submit_approval(job_id, {"approved": payload.approved, "comment": payload.comment or ""})
+    return JsonResponse({"message": "approval submitted", "approved": payload.approved})
 
 
 @router.get("", response=list[AnalysisListItem])

@@ -39,5 +39,10 @@
   },
   "web": {
     "page_title": "AlphaFlow"
+  },
+  "human_approval": {
+    "enabled": false,
+    "timeout_seconds": 600,
+    "max_rejections": 3
   }
 }

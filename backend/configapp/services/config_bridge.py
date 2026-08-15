@@ -34,6 +34,10 @@ AGENT_CONFIG_KEYS = (
     "news_rss_limit",
     "news_reddit_limit",
     "news_x_limit",
+    # approval gate extras
+    "human_approval_enabled",
+    "human_approval_timeout",
+    "human_approval_max_rejections",
 )
 
 
@@ -88,6 +92,9 @@ def build_agent_config() -> Dict[str, Any]:
         "news_rss_limit": cm.get("news.rss_limit", 12),
         "news_reddit_limit": cm.get("news.reddit_limit", 12),
         "news_x_limit": cm.get("news.x_limit", 12),
+        "human_approval_enabled": cm.get("human_approval.enabled", False),
+        "human_approval_timeout": cm.get("human_approval.timeout_seconds", 600),
+        "human_approval_max_rejections": cm.get("human_approval.max_rejections", 3),
     }
 
 

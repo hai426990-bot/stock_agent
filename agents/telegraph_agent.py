@@ -239,6 +239,10 @@ def telegraph_agent_node(state: AgentState):
             "opportunities": unique_opportunities,
             "analyzed_count": len(analyzed_news)
         }
+        # 状态必须 msgpack/JSON-safe（LangGraph checkpoint 序列化要求）
+        from tools.json_safe import to_json_safe
+        overall_analysis = to_json_safe(overall_analysis)
+        analyzed_news = to_json_safe(analyzed_news)
         
         print(f"✅ 同花顺新闻分析完成")
         print(f"   市场情绪: {market_sentiment}")

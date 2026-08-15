@@ -143,6 +143,10 @@ def news_agent_node(state: AgentState):
     if extra_items:
         merged_news_items.extend(extra_items)
     
+    # 状态必须 msgpack/JSON-safe（LangGraph checkpoint 序列化要求）
+    from tools.json_safe import to_json_safe
+    merged_news_items = to_json_safe(merged_news_items)
+    
     if not isinstance(api_key, str) or not api_key:
         return {
             "news_analysis": "Error: Invalid API Key",

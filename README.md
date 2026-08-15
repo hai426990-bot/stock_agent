@@ -13,6 +13,7 @@ AlphaFlow 是一个基于 LangGraph 和 LangChain 构建的智能股票分析系
 - **电报分析代理 (TelegraphAgent)**: 负责分析同花顺实时新闻动态（并行分析，不阻塞流水线）
 - **策略生成代理 (StrategyAgent)**: 综合资讯、量化与电报数据，分析不同策略的表现并生成投资分析报告
 - **风险审核代理 (RiskAgent)**: 负责审核报告的逻辑严密性，评估回测结果的可靠性（带熔断与修订循环）
+- **人工审批门 (ApprovalGate)**: 可选启用（`human_approval.enabled=true`）。风控通过后工作流以 LangGraph `interrupt()` 挂起，通过 SSE 推送审批请求；用户在 Web 端批准或驳回，驳回意见反馈给策略层修订，超过驳回上限自动放行
 
 ### 回测子系统
 
@@ -34,9 +35,9 @@ AlphaFlow 是一个基于 LangGraph 和 LangChain 构建的智能股票分析系
 
 ### Web 界面 (Django + React)
 
-- **REST API** (django-ninja) + **SSE 实时进度流**（多节点事件推送、断线重连续传）
+- **REST API** (django-ninja) + **SSE 实时进度流**（多节点事件推送、断线重连续传、人工审批事件）
 - **市场全览仪表盘**: 实时指数行情、市场情绪分布、热门板块追踪
-- **智能分析页**: 输入股票/板块，实时查看多智能体分析进度与报告
+- **智能分析页**: 输入股票/板块，实时查看多智能体分析进度与报告（含人工审批面板）
 - **配置面板**: 模型、LLM 参数、回测参数在线配置
 
 ## 快速开始
@@ -250,8 +251,17 @@ cd frontend && npx tsc -b && npm run build
 3. **HTTP 超时防护**: akshare 内部大量请求默认不设超时，上游变慢时可能无限期挂起。系统启动时会自动安装全局超时防护（默认连接 5s/读取 15s，可通过环境变量 `AKSHARE_HTTP_TIMEOUT=连接秒,读取秒` 调整），详见 `tools/http_timeout.py`。
 4. **并发分析**: 后端同时最多运行 2 个分析任务（超出返回 429）
 5. **风险审核**: 报告生成后会自动进行风险审核，最多修订 3 次
-6. **单进程部署限制**: 分析任务运行在进程内后台线程（进程内队列 + 信号量上限）。生产部署请使用**单 worker**（`uvicorn backend.backend.asgi:application --workers 1`）；多 worker 会各自持有独立的并发上限与队列，且进程重启会丢失运行中的任务（任务状态与事件已持久化到 SQLite，客户端断线重连仍可恢复）。如需水平扩展，应迁移到 Celery/ARQ 等任务队列。
-7. **网络连接**: 需要稳定的网络连接以获取实时市场数据
+6. **人工审批 (可选)**: 在 `config_default.json` 或环境变量中设置
+   `human_approval.enabled=true` 后，风控通过的报告会挂起等待人工审批
+   （`timeout_seconds` 默认 600s，超时自动驳回；`max_rejections` 默认 3 次，
+   超过自动放行）。审批期间任务占用一个并发 worker 名额，前端 SSE 保持连接。
+7. **单进程部署限制**: 分析任务运行在进程内后台线程（进程内队列 + 信号量上限）。
+   生产部署请使用**单 worker**（`uvicorn backend.backend.asgi:application --workers 1`）；
+   多 worker 会各自持有独立的并发上限与队列，且进程重启会丢失运行中的任务
+   （任务状态与事件已持久化到 SQLite，客户端断线重连仍可恢复；checkpointer 为
+   进程内 MemorySaver，如需跨进程恢复请替换为 SqliteSaver）。如需水平扩展，
+   应迁移到 Celery/ARQ 等任务队列。
+8. **网络连接**: 需要稳定的网络连接以获取实时市场数据
 
 ## 许可证
 

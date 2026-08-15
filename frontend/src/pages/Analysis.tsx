@@ -2,6 +2,7 @@ import { useCallback, useEffect } from "react"
 import { useQuery } from "@tanstack/react-query"
 import AnalysisForm from "../components/AnalysisForm"
 import AnalysisProgress from "../components/AnalysisProgress"
+import ApprovalGate from "../components/ApprovalGate"
 import ReportViewer from "../components/ReportViewer"
 import RiskAssessment from "../components/RiskAssessment"
 import BacktestCandidates from "../components/BacktestCandidates"
@@ -25,7 +26,9 @@ export default function Analysis() {
       onEvent: analysis.handleNodeEvent,
       onDone: analysis.handleDone,
       onError: analysis.handleError,
-      enabled: analysis.status === "running",
+      onApproval: analysis.handleApproval,
+      onApprovalResumed: analysis.handleApprovalResumed,
+      enabled: analysis.status === "running" || analysis.status === "awaiting_approval",
     },
   )
 
@@ -75,6 +78,20 @@ export default function Analysis() {
             events={analysis.progress}
             stockName={analysis.stockInfo?.name}
           />
+        )}
+
+        {analysis.status === "awaiting_approval" && analysis.approvalRequest && (
+          <>
+            <AnalysisProgress
+              events={analysis.progress}
+              stockName={analysis.stockInfo?.name}
+            />
+            <ApprovalGate
+              payload={analysis.approvalRequest}
+              submitting={analysis.approvalSubmitting}
+              onVerdict={analysis.submitVerdict}
+            />
+          </>
         )}
 
         {analysis.status === "completed" && detail && (

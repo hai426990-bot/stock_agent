@@ -438,6 +438,39 @@
         "description": "Delete an analysis report (and its node events via cascade)."
       }
     },
+    "/api/analysis/{job_id}/approval": {
+      "post": {
+        "operationId": "backend_analysis_api_analysis_approval",
+        "summary": "Analysis Approval",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "description": "Human-in-the-loop: deliver the approval verdict to a paused worker.\n\nThe worker is blocked at the approval gate (report status\n\"awaiting_approval\"); this wakes it with {\"approved\", \"comment\"}.\nReturns 404 for unknown jobs and 409 when nobody is awaiting approval.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApprovalIn"
+              }
+            }
+          },
+          "required": true
+        }
+      }
+    },
     "/api/backtests/": {
       "get": {
         "operationId": "backend_backtests_api_backtest_list",
@@ -997,6 +1030,22 @@
           "updated_at"
         ],
         "title": "AnalysisDetailOut",
+        "type": "object"
+      },
+      "ApprovalIn": {
+        "properties": {
+          "approved": {
+            "default": true,
+            "title": "Approved",
+            "type": "boolean"
+          },
+          "comment": {
+            "default": "",
+            "title": "Comment",
+            "type": "string"
+          }
+        },
+        "title": "ApprovalIn",
         "type": "object"
       },
       "BacktestListOut": {

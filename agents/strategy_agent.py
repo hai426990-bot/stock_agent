@@ -213,6 +213,7 @@ def strategy_agent_node(state: AgentState):
     【1. 资讯与研报深度分析】: 
     - 核心摘要: {{news_analysis}}
     - 情感量化评分: {{sentiment_score}} (-1 到 1)
+    - 恐惧贪婪指数: {{fear_greed_index}} (0-100, 越高越贪婪/过热)
     
     【2. 财务/板块基础数据】: 
     - 核心指标: {{quant_data}}
@@ -297,6 +298,7 @@ def strategy_agent_node(state: AgentState):
         res = chain.invoke({
             "news_analysis": news_analysis,
             "sentiment_score": sentiment_score,
+            "fear_greed_index": state.get("fear_greed_index", 50.0),
             "quant_data": display_quant_data,
             "tech_indicators": quant_data.get("technical_indicators", state.get("technical_indicators", {})),
             "backtest_candidates": backtest_candidates,

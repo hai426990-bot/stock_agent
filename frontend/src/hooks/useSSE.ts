@@ -1,10 +1,12 @@
 import { useEffect, useRef, useCallback, useState } from "react"
-import type { NodeEvent } from "../types"
+import type { NodeEvent, ApprovalPayload } from "../types"
 
 interface UseSSEOptions {
   onEvent?: (event: NodeEvent) => void
   onDone?: (reportId: string) => void
   onError?: (message: string) => void
+  onApproval?: (payload: ApprovalPayload) => void
+  onApprovalResumed?: (verdict: { approved: boolean; comment?: string }) => void
   enabled?: boolean
 }
 
@@ -15,7 +17,7 @@ interface UseSSEReturn {
 }
 
 export function useSSE(url: string | null, options: UseSSEOptions = {}): UseSSEReturn {
-  const { onEvent, onDone, onError, enabled = true } = options
+  const { onEvent, onDone, onError, onApproval, onApprovalResumed, enabled = true } = options
   const esRef = useRef<EventSource | null>(null)
   const [connected, setConnected] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -68,6 +70,16 @@ export function useSSE(url: string | null, options: UseSSEOptions = {}): UseSSER
       close()
     })
 
+    es.addEventListener("approval", (e: MessageEvent) => {
+      const data: NodeEvent = JSON.parse(e.data)
+      if (data.payload) onApproval?.(data.payload)
+    })
+
+    es.addEventListener("approval_resumed", (e: MessageEvent) => {
+      const data: NodeEvent = JSON.parse(e.data)
+      if (data.verdict) onApprovalResumed?.(data.verdict)
+    })
+
     es.addEventListener("error", (e: MessageEvent) => {
       let msg = "连接异常"
       try {
@@ -88,7 +100,7 @@ export function useSSE(url: string | null, options: UseSSEOptions = {}): UseSSER
       es.close()
       setConnected(false)
     }
-  }, [url, enabled, onEvent, onDone, onError, close])
+  }, [url, enabled, onEvent, onDone, onError, onApproval, onApprovalResumed, close])
 
   return { connected, error, close }
 }

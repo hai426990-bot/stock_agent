@@ -22,6 +22,13 @@ export function deleteAnalysis(id: string): Promise<void> {
   return client.delete(`/analysis/${id}/`).then((r) => r.data)
 }
 
+export function submitApproval(
+  id: string,
+  payload: { approved: boolean; comment?: string },
+): Promise<{ message: string; approved: boolean }> {
+  return client.post(`/analysis/${id}/approval`, payload).then((r) => r.data)
+}
+
 export function buildStreamUrl(id: string, resumeFrom = 0): string {
   const base = import.meta.env.VITE_API_BASE || ""
   return `${base}/api/analysis/${id}/stream?resume_from=${resumeFrom}`

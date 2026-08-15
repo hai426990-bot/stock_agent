@@ -92,7 +92,7 @@ class _FakeApp:
     def __init__(self, events):
         self.events = events
 
-    def stream(self, initial_state):
+    def stream(self, initial_state, config=None):
         for ev in self.events:
             yield ev
 
@@ -185,3 +185,47 @@ class TestAnalysisDetail:
         c = Client()
         resp = c.get("/api/analysis/not-a-uuid")
         assert resp.status_code == 404
+
+
+@pytest.mark.django_db(transaction=True)
+class TestAnalysisApproval:
+    """POST /api/analysis/{id}/approval — human-in-the-loop verdict delivery."""
+
+    def test_approval_invalid_uuid_returns_404(self):
+        c = Client()
+        resp = c.post("/api/analysis/not-a-uuid/approval", {"approved": True},
+                      content_type="application/json")
+        assert resp.status_code == 404
+
+    def test_approval_unknown_report_returns_404(self):
+        c = Client()
+        resp = c.post("/api/analysis/00000000-0000-0000-0000-000000000000/approval",
+                      {"approved": True}, content_type="application/json")
+        assert resp.status_code == 404
+
+    def test_approval_not_awaiting_returns_409(self):
+        report = AnalysisReport.objects.create(
+            stock_code="600519", stock_name="贵州茅台",
+            is_sector=False, status=AnalysisReport.Status.RUNNING,
+        )
+        c = Client()
+        resp = c.post(f"/api/analysis/{report.id}/approval", {"approved": True},
+                      content_type="application/json")
+        assert resp.status_code == 409
+
+    def test_approval_awaiting_submits_verdict(self):
+        report = AnalysisReport.objects.create(
+            stock_code="600519", stock_name="贵州茅台",
+            is_sector=False, status=AnalysisReport.Status.AWAITING_APPROVAL,
+        )
+        with patch("backend.analysis.api.submit_approval", return_value=True) as mock_submit, \
+             patch("backend.analysis.api.is_awaiting_approval", return_value=True):
+            c = Client()
+            resp = c.post(f"/api/analysis/{report.id}/approval",
+                          {"approved": False, "comment": "风险提示不足"},
+                          content_type="application/json")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["approved"] is False
+        mock_submit.assert_called_once_with(
+            str(report.id), {"approved": False, "comment": "风险提示不足"})

@@ -84,6 +84,30 @@ describe("useSSE", () => {
     expect(onError).toHaveBeenCalledWith("boom")
   })
 
+  it("approval 事件触发 onApproval 携带 payload", () => {
+    const onApproval = vi.fn()
+    renderHook(() => useSSE("http://x/s", { onApproval }))
+    act(() => {
+      FakeEventSource.instances[0].emit("approval", {
+        seq: 8,
+        payload: { decision: "通过", reason: "逻辑自洽", review_count: 1 },
+      })
+    })
+    expect(onApproval).toHaveBeenCalledWith({ decision: "通过", reason: "逻辑自洽", review_count: 1 })
+  })
+
+  it("approval_resumed 事件触发 onApprovalResumed 携带 verdict", () => {
+    const onApprovalResumed = vi.fn()
+    renderHook(() => useSSE("http://x/s", { onApprovalResumed }))
+    act(() => {
+      FakeEventSource.instances[0].emit("approval_resumed", {
+        seq: 9,
+        verdict: { approved: false, comment: "风险提示不足" },
+      })
+    })
+    expect(onApprovalResumed).toHaveBeenCalledWith({ approved: false, comment: "风险提示不足" })
+  })
+
   it("同一 job 断线重连时携带 resume_from=lastSeq", () => {
     const onEvent = vi.fn()
     const handlers = { onEvent } // 稳定引用，避免 effect 因回调变化重启

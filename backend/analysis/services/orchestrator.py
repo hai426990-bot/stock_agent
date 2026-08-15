@@ -9,6 +9,15 @@ Every event is ALSO persisted to AnalysisNodeEvent, so:
   - if the worker thread dies without flushing the queue, the SSE view detects
     terminal report.status via a DB poll and closes cleanly
 
+Human approval (HITL):
+  The graph is compiled with a MemorySaver checkpointer and invoked with
+  thread_id=<report_id>. When the approval gate interrupts, the stream yields
+  {"__interrupt__": (Interrupt(value=...),)}; the worker publishes an
+  "approval" SSE event, flips the report to AWAITING_APPROVAL and blocks on a
+  per-job threading.Event. POST /api/analysis/{id}/approval calls
+  submit_approval(), the worker resumes the same thread with
+  Command(resume=verdict) and the stream continues.
+
 Design:
   - start_analysis(report) -> registers a queue.Queue for report.id, kicks off
     _run_graph in a daemon thread, returns immediately.
@@ -17,12 +26,15 @@ Design:
 
 Events yielded have shape:
     {"event": "node", "seq": N, "node": "<name>", "status": "completed|error", ...}
+    {"event": "approval", "seq": N, "payload": {...}}
+    {"event": "approval_resumed", "seq": N, "verdict": {...}}
     {"event": "done", "report_id": "<uuid>"}
     {"event": "error", "node": "<name>", "message": "..."}
 """
 import asyncio
 import queue
 import threading
+import time
 import traceback
 import uuid
 from asgiref.sync import sync_to_async
@@ -30,6 +42,7 @@ from typing import Any, AsyncIterator, Dict, Optional
 
 from backend.analysis.models import AnalysisReport, AnalysisNodeEvent
 from backend.analysis.services.state_builder import build_initial_state, project_serializable
+from backend.configapp.services.config_bridge import get_effective_config
 
 # Sentinels pushed onto the queue to signal terminal state.
 _DONE = object()
@@ -50,6 +63,10 @@ MAX_WORKERS = 2
 # across analyses instead of rebuilding on every POST.
 _graph = None
 _graph_lock = threading.Lock()
+
+# Human-approval wait registry: job_id -> (Event, verdict slot)
+_approval_events: Dict[str, threading.Event] = {}
+_approval_verdicts: Dict[str, dict] = {}
 
 
 def get_graph():
@@ -111,13 +128,72 @@ def _get_report(report_id: str):
         return None
 
 
+def _extract_interrupt(state_update: Any) -> Optional[dict]:
+    """Pull the payload out of a LangGraph __interrupt__ stream chunk."""
+    if isinstance(state_update, (tuple, list)) and state_update:
+        first = state_update[0]
+        value = getattr(first, "value", None)
+        return value if isinstance(value, dict) else ({"value": value} if value is not None else {})
+    return {}
+
+
+def _approval_timeout() -> float:
+    """Approval wait timeout (seconds) from config, default 600."""
+    try:
+        cfg = get_effective_config()
+        return float((cfg.get("human_approval") or {}).get("timeout_seconds", 600))
+    except Exception:
+        return 600.0
+
+
+def _wait_for_approval(report_id: str) -> Optional[dict]:
+    """Block the worker until submit_approval() delivers a verdict.
+
+    Returns the verdict dict, or None on timeout (caller auto-rejects).
+    """
+    ev = threading.Event()
+    with _lock:
+        _approval_events[report_id] = ev
+        _approval_verdicts.pop(report_id, None)
+    try:
+        if not ev.wait(_approval_timeout()):
+            return None
+        with _lock:
+            return _approval_verdicts.pop(report_id, None)
+    finally:
+        with _lock:
+            _approval_events.pop(report_id, None)
+
+
+def submit_approval(report_id: str, verdict: dict) -> bool:
+    """Deliver a human-approval verdict to a waiting worker (resume endpoint).
+
+    Returns False if no worker is currently awaiting approval for this job.
+    """
+    with _lock:
+        ev = _approval_events.get(report_id)
+        if ev is None:
+            return False
+        _approval_verdicts[report_id] = dict(verdict)
+        ev.set()
+    return True
+
+
+def is_awaiting_approval(report_id: str) -> bool:
+    """True if the job's worker is currently blocked at the approval gate."""
+    with _lock:
+        return report_id in _approval_events
+
+
 def _run_graph(report_id: str) -> None:
     """Worker thread entry point. Runs the synchronous LangGraph stream loop.
 
     Runs OUTSIDE any asyncio loop (plain daemon thread). Publishes events to the
-    job's stdlib queue and persists them to the DB.
+    job's stdlib queue and persists them to the DB. Supports interrupt/resume
+    for the human-approval gate (see module docstring).
     """
     from django.db import connection
+    from langgraph.types import Command
 
     report = AnalysisReport.objects.get(id=report_id)
     report.status = AnalysisReport.Status.RUNNING
@@ -128,10 +204,46 @@ def _run_graph(report_id: str) -> None:
         initial_state = build_initial_state(report)
         app = get_graph()
         final = dict(initial_state)
+        config = {"configurable": {"thread_id": report_id}}
 
-        for output in app.stream(initial_state):
-            # output is {node_name: state_update}
+        stream = app.stream(initial_state, config=config)
+        while True:
+            try:
+                output = next(stream)
+            except StopIteration:
+                break
+
             for node_name, state_update in output.items():
+                # 人工审批中断: 挂起等待用户裁决
+                if node_name == "__interrupt__":
+                    seq += 1
+                    payload = _extract_interrupt(state_update)
+                    _record_event(report, seq, "approval_gate", "waiting",
+                                  {"payload": payload})
+                    _put(report_id, {
+                        "event": "approval", "seq": seq, "payload": payload,
+                    })
+                    report.status = AnalysisReport.Status.AWAITING_APPROVAL
+                    report.save(update_fields=["status", "updated_at"])
+                    print("🧑‍💼 等待人工审批...")
+
+                    verdict = _wait_for_approval(report_id)
+                    if verdict is None:
+                        verdict = {"approved": False, "comment": "审批超时，自动驳回"}
+                        print("⏰ 人工审批超时，自动驳回")
+
+                    seq += 1
+                    _record_event(report, seq, "approval_gate", "resumed",
+                                  {"verdict": verdict})
+                    _put(report_id, {
+                        "event": "approval_resumed", "seq": seq, "verdict": verdict,
+                    })
+                    report.status = AnalysisReport.Status.RUNNING
+                    report.save(update_fields=["status", "updated_at"])
+                    # 以同一 thread_id 恢复执行
+                    stream = app.stream(Command(resume=verdict), config=config)
+                    continue
+
                 seq += 1
                 if isinstance(state_update, dict):
                     final.update(state_update)
