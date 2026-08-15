@@ -17,7 +17,8 @@ SECRET_KEY = os.environ.get(
     "django-insecure-dev-key-change-me-in-production",
 )
 DEBUG = os.environ.get("DJANGO_DEBUG", "1") == "1"
-ALLOWED_HOSTS = ["*"]
+# 生产部署请设置 DJANGO_ALLOWED_HOSTS（逗号分隔）；本地开发默认放开
+ALLOWED_HOSTS = [h.strip() for h in os.environ.get("DJANGO_ALLOWED_HOSTS", "*").split(",") if h.strip()]
 
 INSTALLED_APPS = [
     "django.contrib.admin",

@@ -9,13 +9,18 @@ from backend.configapp.services.config_bridge import build_agent_config
 
 
 def build_initial_state(report: AnalysisReport) -> Dict[str, Any]:
-    """Build the AgentState dict the graph expects, mirroring app.py:529-537.
+    """Build the AgentState dict the graph expects, mirroring main.py.
 
     The `config` sub-dict carries the per-run LLM/backtest params the agents
     read (api_key, api_base, model_name, temperature, max_tokens, thinking_mode,
     backtest_lookback_days, backtest_initial_cash).
+
+    NOTE: keys must stay in sync with state.AgentState — LangGraph silently
+    drops node-returned keys that are not declared in the state schema.
     """
     config = build_agent_config()
+    # Web 模式标记：quant_agent 据此把回测结果入库 BacktestResult 并关联本报告
+    config["report_id"] = str(report.id)
     return {
         "stock_code": report.stock_code,
         "stock_name": report.stock_name,
@@ -25,21 +30,20 @@ def build_initial_state(report: AnalysisReport) -> Dict[str, Any]:
         # data layer
         "news_items": [],
         "news_analysis": "",
+        "news_parse_success": True,
         "sentiment_score": 0.0,
         "fear_greed_index": 0.0,
+        "telegraph_news": [],
+        "telegraph_analysis": {},
         "quant_data": {"backtest_candidates": []},
         "technical_indicators": {},
-        "backtest_result": {},
         # decision layer
         "strategy_report": "",
-        "risk_assessment": "",
+        "risk_assessment": {},
         # control flow
         "messages": [],
-        "next_node": "",
         "revision_needed": False,
-        "human_approval": False,
         "count": 0,
-        "is_web_mode": True,
         "reasoning_content": [],
         "config": config,
         "error": "",
@@ -56,8 +60,9 @@ def project_serializable(state: Dict[str, Any]) -> Dict[str, Any]:
     """
     keep = (
         "stock_code", "stock_name", "is_sector", "sector_type", "sector_cons",
-        "news_items", "news_analysis", "sentiment_score", "fear_greed_index",
-        "quant_data", "technical_indicators", "backtest_result",
+        "news_items", "news_analysis", "news_parse_success", "sentiment_score",
+        "fear_greed_index", "telegraph_news", "telegraph_analysis",
+        "quant_data", "technical_indicators",
         "strategy_report", "risk_assessment",
     )
     out = {}

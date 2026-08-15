@@ -237,6 +237,7 @@ def run_alpha_flow(input_str: str):
         "stock_name": stock_name,
         "news_items": [],
         "news_analysis": "",
+        "news_parse_success": True,
         "sentiment_score": 0.0,
         "quant_data": {},
         "technical_indicators": {},
@@ -244,7 +245,6 @@ def run_alpha_flow(input_str: str):
         "risk_assessment": "",
         "messages": [],
         "revision_needed": False,
-        "human_approval": False,
         "count": 0,
         "is_sector": False,
         "error": "",
@@ -305,12 +305,6 @@ def run_alpha_flow(input_str: str):
                     logger.info("  - API Key 无效: 请检查 OPENAI_API_KEY 是否正确")
                     logger.info("  - 网络连接问题: 请检查网络连接和代理设置")
                     logger.info("  - 数据源问题: AkShare 数据源可能暂时不可用，请稍后重试")
-                    return
-                # 检查是否有中断信号
-                if final_state.get("interrupted"):
-                    stop_loading = True
-                    spinner_thread.join()
-                    logger.info("流程被用户中断")
                     return
         
         stop_loading = True

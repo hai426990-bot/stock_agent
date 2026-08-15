@@ -51,8 +51,8 @@ def news_agent_node(state: AgentState):
     stock_name = state.get("stock_name", stock_code)
     is_sector = state.get("is_sector", False)
     
-    # 检查是否有错误或中断信号
-    if state.get("error") or state.get("interrupted"):
+    # 检查是否有错误信号
+    if state.get("error"):
         return {"messages": [], "consecutive_failures": state.get("consecutive_failures", 0)}
     
     print(f"--- 🕵️‍♂️ 资讯侦察兵: 正在分析 {stock_name}({stock_code}) 的专业金融资讯 ---")

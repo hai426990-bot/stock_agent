@@ -108,8 +108,8 @@ def strategy_agent_node(state: AgentState):
     is_sector = state.get("is_sector", False)
     current_date = datetime.now().strftime("%Y-%m-%d")
     
-    # 检查是否有错误或中断信号
-    if state.get("error") or state.get("interrupted"):
+    # 检查是否有错误信号
+    if state.get("error"):
         return {"messages": [], "consecutive_failures": state.get("consecutive_failures", 0)}
     
     print(f"--- 🧠 策略主理人: 正在综合分析 {stock_name}({stock_code}) [当前日期: {current_date}] ---")
@@ -129,7 +129,7 @@ def strategy_agent_node(state: AgentState):
     task_description = f"基于多维数据，为【{stock_name}】板块撰写一份深度的 ETF 投资建议报告。" if is_sector else f"基于多维数据，为股票【{stock_name}({stock_code})】撰写一份深度的投资建议报告。"
     
     # 将成分股数据作为上下文，如果是板块分析则加入
-    sector_cons_context = f"【4. 板块成分股强弱】: {{sector_cons}}\n(注：成分股的表现决定了板块指数的稳定性，请结合成分股表现给出 ETF 申赎建议)" if is_sector else ""
+    sector_cons_context = f"【5. 板块成分股强弱】: {{sector_cons}}\n(注：成分股的表现决定了板块指数的稳定性，请结合成分股表现给出 ETF 申赎建议)" if is_sector else ""
 
     # 获取风控反馈
     risk_feedback = ""
@@ -224,6 +224,10 @@ def strategy_agent_node(state: AgentState):
     - 包含指标: MA 均线系统(5/10/20/60日)、MACD(12,26,9)、RSI(14日)、KDJ(9日)、BOLL 布林带(20日,2σ)、成交量比率及自动识别的技术形态
     - 重要：所有技术指标均已标注计算周期，请严格按照标注的周期参数进行解读，禁止随意更改周期参数
     
+    【4. 电报实时动态 (同花顺实时新闻分析)】: 
+    - 分析结果: {{telegraph_analysis}}
+    - (注：包含市场情绪、重要事件、投资机会与风险提示。若该项为空或显示"暂无/失败"，请如实说明电报维度无法评估，不要编造内容)
+    
     {sector_cons_context}
     ---
     
@@ -232,6 +236,7 @@ def strategy_agent_node(state: AgentState):
     2. 逻辑闭环: 结论必须由提供的本地数据支撑。
     3. 多维深度分析:
        - 资讯维度: 结合近期行业政策、宏观环境，评估板块的赛道价值。
+       - 电报维度: 若电报数据可用，将同花顺实时动态中的市场情绪/重要事件与资讯、回测结论相互印证；不可用时明确标注"电报维度无法评估"。
        - 技术/资金维度: 直接引用本地计算出的指标，解读板块的趋势强度或变盘点。
        - 策略解释 (核心): 仅基于【候选策略回测集】中实际存在的策略（backtest_candidates）进行解读。
          - 请按 Sharpe 从高到低选 Top3（如不足则全部），逐个分析：核心假设/适用行情/关键风险/交易频繁度与交易成本敏感性。
@@ -295,6 +300,7 @@ def strategy_agent_node(state: AgentState):
             "quant_data": display_quant_data,
             "tech_indicators": quant_data.get("technical_indicators", state.get("technical_indicators", {})),
             "backtest_candidates": backtest_candidates,
+            "telegraph_analysis": state.get("telegraph_analysis", {}) or "暂无电报数据",
             "sector_cons": state.get("sector_cons", [])[:10] if is_sector else []
         })
         

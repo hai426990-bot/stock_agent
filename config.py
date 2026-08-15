@@ -1,5 +1,6 @@
 import os
 import json
+import threading
 from pathlib import Path
 from typing import Any, Dict, Optional
 from dotenv import load_dotenv
@@ -40,6 +41,8 @@ class ConfigManager:
         self._env_config: Dict[str, Any] = {}
         self._runtime_config: Dict[str, Any] = {}
         self._merged_config: Dict[str, Any] = {}
+        # 保护配置文件的读写与合并（web 配置 API 与 CLI 可能并发访问）
+        self._lock = threading.RLock()
         
         self._load_all_configs()
     
@@ -119,12 +122,13 @@ class ConfigManager:
         3. 用户配置覆盖环境变量
         4. 运行时配置覆盖用户配置
         """
-        self._merged_config = {}
-        
-        self._deep_update(self._merged_config, self._default_config)
-        self._deep_update(self._merged_config, self._env_config)
-        self._deep_update(self._merged_config, self._user_config)
-        self._deep_update(self._merged_config, self._runtime_config)
+        with self._lock:
+            self._merged_config = {}
+            
+            self._deep_update(self._merged_config, self._default_config)
+            self._deep_update(self._merged_config, self._env_config)
+            self._deep_update(self._merged_config, self._user_config)
+            self._deep_update(self._merged_config, self._runtime_config)
     
     def _deep_update(self, base: Dict[str, Any], override: Dict[str, Any]):
         """
@@ -222,10 +226,11 @@ class ConfigManager:
             config: 用户配置字典
         """
         try:
-            with open(self.user_config_file, 'w', encoding='utf-8') as f:
-                json.dump(config, f, ensure_ascii=False, indent=2)
-            self._user_config = config
-            self._merge_configs()
+            with self._lock:
+                with open(self.user_config_file, 'w', encoding='utf-8') as f:
+                    json.dump(config, f, ensure_ascii=False, indent=2)
+                self._user_config = config
+                self._merge_configs()
             print(f"✅ 用户配置已保存到 {self.user_config_file}")
         except IOError as e:
             print(f"❌ 保存用户配置失败: {e}")
@@ -236,9 +241,10 @@ class ConfigManager:
         """
         if self.user_config_file.exists():
             try:
-                os.remove(self.user_config_file)
-                self._user_config = {}
-                self._merge_configs()
+                with self._lock:
+                    os.remove(self.user_config_file)
+                    self._user_config = {}
+                    self._merge_configs()
                 print(f"✅ 用户配置文件已删除: {self.user_config_file}")
             except IOError as e:
                 print(f"❌ 删除用户配置文件失败: {e}")

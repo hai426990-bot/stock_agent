@@ -23,8 +23,8 @@ def telegraph_agent_node(state: AgentState):
     stock_code = state.get("stock_code")
     stock_name = state.get("stock_name")
     
-    # 检查是否有错误或中断信号
-    if state.get("error") or state.get("interrupted"):
+    # 检查是否有错误信号
+    if state.get("error"):
         return {"messages": [], "consecutive_failures": state.get("consecutive_failures", 0)}
     
     print(f"--- 📰 同花顺新闻: 正在分析实时市场动态 ---")
@@ -35,28 +35,45 @@ def telegraph_agent_node(state: AgentState):
     
     if not isinstance(api_key, str) or not api_key:
         return {
-            "telegraph_analysis": "Error: Invalid API Key",
+            "telegraph_analysis": {
+                "summary": "Error: Invalid API Key",
+                "market_sentiment": "中性",
+                "important_events": [],
+                "opportunities": [],
+                "analyzed_count": 0,
+            },
             "telegraph_news": [],
             "consecutive_failures": state.get("consecutive_failures", 0)
         }
     
-    # 获取同花顺新闻
+    # 获取同花顺新闻（失败不阻塞流水线：仅记录摘要，不设置 error）
     try:
         news_list = get_10jqka_news(limit=15)
         print(f"✅ 获取到 {len(news_list)} 条同花顺新闻")
     except Exception as e:
         print(f"❌ 获取同花顺新闻失败: {e}")
         return {
-            "telegraph_analysis": "获取同花顺新闻失败",
+            "telegraph_analysis": {
+                "summary": f"获取同花顺新闻失败: {str(e)[:100]}",
+                "market_sentiment": "中性",
+                "important_events": [],
+                "opportunities": [],
+                "analyzed_count": 0,
+            },
             "telegraph_news": [],
-            "error": str(e),
             "consecutive_failures": state.get("consecutive_failures", 0)
         }
     
     # 如果没有新闻，返回空结果
     if not news_list:
         return {
-            "telegraph_analysis": "暂无同花顺新闻数据",
+            "telegraph_analysis": {
+                "summary": "暂无同花顺新闻数据",
+                "market_sentiment": "中性",
+                "important_events": [],
+                "opportunities": [],
+                "analyzed_count": 0,
+            },
             "telegraph_news": [],
             "consecutive_failures": state.get("consecutive_failures", 0)
         }
@@ -231,14 +248,20 @@ def telegraph_agent_node(state: AgentState):
         return {
             "telegraph_analysis": overall_analysis,
             "telegraph_news": analyzed_news,
+            "reasoning_content": [{"agent": "市场动态分析师", "content": summary}],
             "consecutive_failures": state.get("consecutive_failures", 0)
         }
         
     except Exception as e:
         print(f"❌ 同花顺新闻分析失败: {e}")
         return {
-            "telegraph_analysis": "分析失败",
+            "telegraph_analysis": {
+                "summary": f"分析失败: {str(e)[:100]}",
+                "market_sentiment": "中性",
+                "important_events": [],
+                "opportunities": [],
+                "analyzed_count": 0,
+            },
             "telegraph_news": news_list,
-            "error": str(e),
             "consecutive_failures": state.get("consecutive_failures", 0)
         }

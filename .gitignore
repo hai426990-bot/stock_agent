@@ -12,6 +12,9 @@ ENV/
 env.bak/
 venv.bak/
 
+# 用户配置（含 api_key 明文，禁止入库；系统默认值见 config_default.json）
+config_user.json
+
 # Streamlit
 .streamlit/
 

@@ -139,6 +139,7 @@ stock_agent/
 │   ├── backend/            # 项目配置 (settings/urls/asgi/wsgi/bootstrap)
 │   ├── analysis/           # 分析任务 API + orchestrator (SSE 流)
 │   ├── market/             # 行情仪表盘 API
+│   ├── backtests/          # 回测历史 API（Django 持久化回测记录）
 │   ├── configapp/          # 配置 API
 │   └── core/               # 健康检查
 ├── frontend/               # React + Vite + TypeScript 前端
@@ -147,8 +148,9 @@ stock_agent/
 ├── monitor.py              # 盘中异动监控 CLI 程序入口
 ├── state.py                # 工作流状态定义
 ├── config.py               # 配置管理（4 层优先级）
+├── config_default.json     # 系统默认配置（基线，可提交）
 ├── logger.py               # 日志系统
-└── tests/                  # pytest 测试（agents/backtest/tools/backend）
+└── tests/                  # pytest 测试（agents/backtest/tools/backend/graph e2e）
 ```
 
 ## 技术栈
@@ -201,6 +203,11 @@ stock_agent/
 
 系统支持自动模型探测，按配置列表顺序尝试连接 API，返回第一个可用的模型。
 
+配置按 4 层优先级合并：**运行时 > `config_user.json` > 环境变量 > `config_default.json`**。
+系统默认值集中在仓库根目录的 `config_default.json`（可直接编辑作为基线），
+`config_user.json` 由 Web 配置面板写入（已 gitignore，可存放 `api_key`），
+`.env` 环境变量优先级居中。
+
 在 `.env` 文件中配置支持的模型列表：
 ```env
 SUPPORTED_MODELS=gpt-4o,gpt-4-turbo,gpt-3.5-turbo
@@ -222,7 +229,7 @@ SUPPORTED_MODELS=gpt-4o,gpt-4-turbo,gpt-3.5-turbo
 ## 开发
 
 ```bash
-# 运行全部测试（agents / backtest / tools / backend API / SSE）
+# 运行全部测试（agents / backtest / tools / backend API / SSE / graph e2e）
 .venv/Scripts/python -m pytest
 
 # 批量回测评估：在多个代表性股票上排名全部策略（默认 12 只股票，近 2 年）
@@ -234,6 +241,8 @@ SUPPORTED_MODELS=gpt-4o,gpt-4-turbo,gpt-3.5-turbo
 cd frontend && npx tsc -b && npm run build
 ```
 
+推送后 GitHub Actions 自动运行后端 pytest 与前端类型检查/构建（`.github/workflows/ci.yml`）。
+
 ## 注意事项
 
 1. **数据缓存**: 系统使用本地缓存减少 API 调用，缓存文件位于项目根目录（`.akshare_cache.json`、`.backtest_cache/`）。缓存支持 **stale-if-error**：上游数据源暂时不可用时自动回退到最近一次成功缓存，且空结果不会被写入缓存。
@@ -241,7 +250,8 @@ cd frontend && npx tsc -b && npm run build
 3. **HTTP 超时防护**: akshare 内部大量请求默认不设超时，上游变慢时可能无限期挂起。系统启动时会自动安装全局超时防护（默认连接 5s/读取 15s，可通过环境变量 `AKSHARE_HTTP_TIMEOUT=连接秒,读取秒` 调整），详见 `tools/http_timeout.py`。
 4. **并发分析**: 后端同时最多运行 2 个分析任务（超出返回 429）
 5. **风险审核**: 报告生成后会自动进行风险审核，最多修订 3 次
-6. **网络连接**: 需要稳定的网络连接以获取实时市场数据
+6. **单进程部署限制**: 分析任务运行在进程内后台线程（进程内队列 + 信号量上限）。生产部署请使用**单 worker**（`uvicorn backend.backend.asgi:application --workers 1`）；多 worker 会各自持有独立的并发上限与队列，且进程重启会丢失运行中的任务（任务状态与事件已持久化到 SQLite，客户端断线重连仍可恢复）。如需水平扩展，应迁移到 Celery/ARQ 等任务队列。
+7. **网络连接**: 需要稳定的网络连接以获取实时市场数据
 
 ## 许可证
 

@@ -114,8 +114,8 @@ def quant_agent_node(state: AgentState):
     stock_name = state.get("stock_name", stock_code)
     is_sector = state.get("is_sector", False)
     
-    # 检查是否有错误或中断信号
-    if state.get("error") or state.get("interrupted"):
+    # 检查是否有错误信号
+    if state.get("error"):
         return {"messages": [], "consecutive_failures": state.get("consecutive_failures", 0)}
     
     print(f"--- 📊 数据分析师: 正在分析 {stock_name}({stock_code}) 的量化数据 ---")
@@ -139,8 +139,8 @@ def quant_agent_node(state: AgentState):
              df["dt"] = pd.to_datetime(df["dt"])
              df["adj_close"] = df["close"]
         
-        # 检查是否有错误或中断信号
-        if state.get("error") or state.get("interrupted"):
+        # 检查是否有错误信号
+        if state.get("error"):
             return {"messages": [], "consecutive_failures": state.get("consecutive_failures", 0)}
     except Exception as e:
         print(f"获取历史数据失败: {e}")
@@ -415,6 +415,19 @@ def quant_agent_node(state: AgentState):
                             data_info=data_info,
                             engine_info=engine_info,
                         )
+
+                        # Web 模式（state.config 携带 report_id）下同步入库 Django
+                        # BacktestResult，供 /api/backtests/ 查询；CLI 无该键则跳过。
+                        report_id = config.get("report_id")
+                        if report_id:
+                            try:
+                                from backend.backtests.services import record_backtest
+                                record_backtest(
+                                    report_id, name, strategy_params, metrics,
+                                    data_info=data_info, engine_info=engine_info,
+                                )
+                            except Exception as db_err:
+                                print(f"⚠️ 回测记录入库失败 ({name}): {db_err}")
 
                         label = name
                         formatted = _format_params(strategy_params)

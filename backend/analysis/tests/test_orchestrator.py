@@ -56,11 +56,12 @@ class OrchestratorTests(TransactionTestCase):
         state = build_initial_state(self.report)
         expected = {
             "stock_code", "stock_name", "is_sector", "sector_type", "sector_cons",
-            "news_items", "news_analysis", "sentiment_score", "fear_greed_index",
-            "quant_data", "technical_indicators", "backtest_result",
-            "strategy_report", "risk_assessment", "messages", "next_node",
-            "revision_needed", "human_approval", "count", "is_web_mode",
-            "reasoning_content", "config", "error", "consecutive_failures",
+            "news_items", "news_analysis", "news_parse_success", "sentiment_score",
+            "fear_greed_index", "telegraph_news", "telegraph_analysis",
+            "quant_data", "technical_indicators",
+            "strategy_report", "risk_assessment", "messages",
+            "revision_needed", "count", "reasoning_content",
+            "config", "error", "consecutive_failures",
         }
         self.assertEqual(expected, set(state.keys()), f"missing: {expected - set(state.keys())}")
         agent_cfg = set(state["config"].keys())

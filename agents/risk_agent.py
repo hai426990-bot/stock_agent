@@ -81,8 +81,8 @@ def risk_agent_node(state: AgentState):
     stock_code = state.get("stock_code", "未知股票")
     current_date = datetime.now().strftime("%Y-%m-%d")
     
-    # 检查是否有错误或中断信号
-    if state.get("error") or state.get("interrupted"):
+    # 检查是否有错误信号
+    if state.get("error"):
         return {"messages": [], "consecutive_failures": state.get("consecutive_failures", 0)}
     
     print(f"--- 🛡️ 风控官: 正在审核 {stock_code} 的投资策略 [审核日期: {current_date}] ---")

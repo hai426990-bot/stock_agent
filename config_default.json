@@ -1,0 +1,43 @@
+{
+  "api_base": "https://api.openai.com/v1",
+  "model_name": "gpt-4o",
+  "supported_models": [
+    "gpt-4o",
+    "gpt-4-turbo",
+    "gpt-3.5-turbo",
+    "mimo-v2-flash"
+  ],
+  "llm": {
+    "temperature": 0.5,
+    "max_tokens": 4096,
+    "thinking_mode": true
+  },
+  "backtest": {
+    "days": 365,
+    "cash": 100000.0,
+    "sector_days": 252,
+    "commission": 0.0003,
+    "slippage": 0.001,
+    "max_runs": 20
+  },
+  "news": {
+    "rss_urls": "",
+    "enable_reddit": false,
+    "enable_x": false,
+    "rss_limit": 12,
+    "reddit_limit": 12,
+    "x_limit": 12
+  },
+  "logging": {
+    "level": "INFO",
+    "file": {
+      "enabled": true
+    },
+    "console": {
+      "enabled": true
+    }
+  },
+  "web": {
+    "page_title": "AlphaFlow"
+  }
+}
