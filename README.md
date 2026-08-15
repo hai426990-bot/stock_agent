@@ -87,6 +87,25 @@ python main.py --stock 600519
 python main.py --stock 贵州茅台
 ```
 
+**盘中异动监控 Loop Agent**（开盘到收盘自动监控）:
+```bash
+python monitor.py                        # 循环监控 (默认每 30s 一轮)
+python monitor.py --interval 60          # 每 60s 轮询一次
+python monitor.py --top 10               # 每轮最多分析 10 个异动
+python monitor.py --once                 # 单次扫描后退出 (测试/复盘)
+python monitor.py --data-source eastmoney  # 数据源切换 (默认 sina)
+```
+
+## 盘中异动监控 (Loop Agent)
+
+开盘 (09:30) 到收盘 (15:00) 期间以固定间隔轮询全市场榜单行情，对盘中异动**及时**做规则检测 + LLM 分析判断：
+
+- **数据源**: 新浪/东方财富榜单 Top100 并集（涨幅/跌幅/成交额/换手率/量比/涨速/振幅榜），单轮 2-6 秒，双通道自动回退
+- **异动信号**: 急涨/急跌、放量异动（量比）、高换手异动、振幅异动、新封板/新跌停/炸板（相邻快照差值）、指数异动
+- **分析判断**: LLM 综合实时新闻、资金流向、近 30 日走势给出异动定性、驱动因素、风险等级与关注要点；未配置 API Key 时降级为规则判断
+- **调度管理**: 盘前等待开盘、午间休市暂停、收盘输出当日总结；同股票同信号冷却去重（默认 5 分钟）；事件写入 `logs/monitor/YYYY-MM-DD.jsonl`
+- **时段判断**: 仅工作日监控；跨交易日自动重置快照与冷却状态，可长期后台运行
+
 ## 项目结构
 
 ```
@@ -110,6 +129,12 @@ stock_agent/
 │   ├── news_sources.py     # RSS/Reddit/X 多源
 │   ├── indicators.py       # 技术指标计算
 │   └── retry.py            # 共享重试装饰器
+├── monitor/                # 盘中异动监控 Loop Agent
+│   ├── session.py          # A股交易时段判断
+│   ├── fetcher.py          # 榜单快照抓取 (新浪/东财双通道回退)
+│   ├── detector.py         # 异动规则检测 (含相邻快照差值)
+│   ├── analyzer.py         # LLM 异动分析判断 (无 Key 降级规则)
+│   └── loop.py             # 循环调度器 (轮询/冷却/落盘/收盘总结)
 ├── backend/                # Django + django-ninja 后端
 │   ├── backend/            # 项目配置 (settings/urls/asgi/wsgi/bootstrap)
 │   ├── analysis/           # 分析任务 API + orchestrator (SSE 流)
@@ -118,7 +143,8 @@ stock_agent/
 │   └── core/               # 健康检查
 ├── frontend/               # React + Vite + TypeScript 前端
 ├── graph.py                # 工作流拓扑定义
-├── main.py                 # CLI 程序入口
+├── main.py                 # 分析 CLI 程序入口
+├── monitor.py              # 盘中异动监控 CLI 程序入口
 ├── state.py                # 工作流状态定义
 ├── config.py               # 配置管理（4 层优先级）
 ├── logger.py               # 日志系统
@@ -210,10 +236,12 @@ cd frontend && npx tsc -b && npm run build
 
 ## 注意事项
 
-1. **数据缓存**: 系统使用本地缓存减少 API 调用，缓存文件位于项目根目录（`.akshare_cache.json`、`.backtest_cache/`）
-2. **并发分析**: 后端同时最多运行 2 个分析任务（超出返回 429）
-3. **风险审核**: 报告生成后会自动进行风险审核，最多修订 3 次
-4. **网络连接**: 需要稳定的网络连接以获取实时市场数据
+1. **数据缓存**: 系统使用本地缓存减少 API 调用，缓存文件位于项目根目录（`.akshare_cache.json`、`.backtest_cache/`）。缓存支持 **stale-if-error**：上游数据源暂时不可用时自动回退到最近一次成功缓存，且空结果不会被写入缓存。
+2. **多数据源回退**: 行情/K 线/财务/新闻/板块等数据均配置了备用数据源（东方财富 ⇄ 新浪/同花顺/10jqka），主源超时或不可达时自动切换，避免单源故障导致分析挂起。
+3. **HTTP 超时防护**: akshare 内部大量请求默认不设超时，上游变慢时可能无限期挂起。系统启动时会自动安装全局超时防护（默认连接 5s/读取 15s，可通过环境变量 `AKSHARE_HTTP_TIMEOUT=连接秒,读取秒` 调整），详见 `tools/http_timeout.py`。
+4. **并发分析**: 后端同时最多运行 2 个分析任务（超出返回 429）
+5. **风险审核**: 报告生成后会自动进行风险审核，最多修订 3 次
+6. **网络连接**: 需要稳定的网络连接以获取实时市场数据
 
 ## 许可证
 

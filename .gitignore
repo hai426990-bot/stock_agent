@@ -23,6 +23,9 @@ analysis_history/
 .backtest_cache/
 .backtest_results/
 .akshare_cache.json
+.pytest_cache/
+.pytest_tmp/
+.pytest_tmp_cache/
 
 # Logs
 logs/

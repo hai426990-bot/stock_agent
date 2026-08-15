@@ -9,6 +9,10 @@ from typing import Optional, Dict, Any
 from functools import wraps
 import time
 from tools.retry import retry
+from tools.http_timeout import install_default_timeout
+
+# akshare 请求全局超时防护 (详见 tools/http_timeout.py)
+install_default_timeout()
 
 def _file_ttl_cache(cache_dir: str, name: str, ttl_seconds: int = 86400):
     """Decorator: cache a DataFrame-returning method/function to a parquet file with TTL.
@@ -77,7 +81,8 @@ class DataManager:
         try:
             # AkShare stock_zh_a_hist returns: 日期, 开盘, 收盘, 最高, 最低, 成交量, 成交额, 振幅, 涨跌幅, 涨跌额, 换手率
             df = ak.stock_zh_a_hist(symbol=symbol, period=period,
-                                    start_date=start_date, end_date=end_date, adjust=adjust)
+                                    start_date=start_date, end_date=end_date, adjust=adjust,
+                                    timeout=15)
             if not df.empty:
                 rename_map = {
                     "日期": "dt", "开盘": "open", "最高": "high", "最低": "low",
@@ -322,7 +327,7 @@ class DataManager:
 
             if total_shares is None:
                 try:
-                    info_df = ak.stock_individual_info_em(symbol=symbol)
+                    info_df = ak.stock_individual_info_em(symbol=symbol, timeout=15)
                     if not info_df.empty:
                         # '总股本' is usually the 4th item in stock_individual_info_em
                         res = info_df[info_df["item"] == "总股本"]["value"]
