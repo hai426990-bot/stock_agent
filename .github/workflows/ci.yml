@@ -21,7 +21,7 @@ jobs:
         run: python -m pytest -q -p no:cacheprovider
 
   frontend:
-    name: Frontend (tsc + build)
+    name: Frontend (tsc + build + vitest)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -36,6 +36,35 @@ jobs:
       - name: Type check
         working-directory: frontend
         run: npx tsc -b
+      - name: Unit tests
+        working-directory: frontend
+        run: npm test
       - name: Build
         working-directory: frontend
         run: npm run build
+
+  openapi-sync:
+    name: OpenAPI types sync
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+      - name: Regenerate OpenAPI schema + types
+        run: |
+          python scripts/gen_openapi.py
+          cd frontend && npx openapi-typescript src/types/openapi.json -o src/types/api.generated.ts
+      - name: Fail on drift
+        run: git diff --exit-code -- frontend/src/types/openapi.json frontend/src/types/api.generated.ts

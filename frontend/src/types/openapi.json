@@ -1,0 +1,1188 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "AlphaFlow API",
+    "version": "1.0.0",
+    "description": "Django backend for the AlphaFlow stock-analysis platform."
+  },
+  "paths": {
+    "/api/core/health": {
+      "get": {
+        "operationId": "backend_core_api_health",
+        "summary": "Health",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthOut"
+                }
+              }
+            }
+          }
+        },
+        "description": "Liveness probe. Returns 200 if the API is up."
+      }
+    },
+    "/api/config/": {
+      "get": {
+        "operationId": "backend_configapp_api_get_config",
+        "summary": "Get Config",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConfigOut"
+                }
+              }
+            }
+          }
+        },
+        "description": "Return the merged config. api_key is masked (has_api_key flag instead)."
+      },
+      "put": {
+        "operationId": "backend_configapp_api_update_config",
+        "summary": "Update Config",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConfigOut"
+                }
+              }
+            }
+          }
+        },
+        "description": "Update non-secret config (+ optional api_key). Persists to config_user.json.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConfigIn"
+              }
+            }
+          },
+          "required": true
+        }
+      }
+    },
+    "/api/config/models": {
+      "get": {
+        "operationId": "backend_configapp_api_list_models",
+        "summary": "List Models",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelsOut"
+                }
+              }
+            }
+          }
+        },
+        "description": "List supported models for the dropdown."
+      }
+    },
+    "/api/market/indices": {
+      "get": {
+        "operationId": "backend_market_api_indices",
+        "summary": "Indices",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "description": "Major market index quotes."
+      }
+    },
+    "/api/market/hot-sectors": {
+      "get": {
+        "operationId": "backend_market_api_hot_sectors",
+        "summary": "Hot Sectors",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "default": 5,
+              "title": "Limit",
+              "type": "integer"
+            },
+            "required": false
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "description": "Leading industry sectors."
+      }
+    },
+    "/api/market/sentiment": {
+      "get": {
+        "operationId": "backend_market_api_sentiment",
+        "summary": "Sentiment",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "description": "Market breadth + sentiment label."
+      }
+    },
+    "/api/market/search": {
+      "get": {
+        "operationId": "backend_market_api_search_endpoint",
+        "summary": "Search Endpoint",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "q",
+            "schema": {
+              "title": "Q",
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchOut"
+                }
+              }
+            }
+          }
+        },
+        "description": "Resolve a query to a stock code or board (sector)."
+      }
+    },
+    "/api/market/cache/status": {
+      "get": {
+        "operationId": "backend_market_api_cache_status",
+        "summary": "Cache Status",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "stock_code",
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Stock Code"
+            },
+            "required": false
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CacheStatusOut"
+                }
+              }
+            }
+          }
+        },
+        "description": "AkShare cache status."
+      }
+    },
+    "/api/market/cache": {
+      "delete": {
+        "operationId": "backend_market_api_cache_clear",
+        "summary": "Cache Clear",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "ttl_seconds",
+            "schema": {
+              "default": 300,
+              "title": "Ttl Seconds",
+              "type": "integer"
+            },
+            "required": false
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "description": "Clear expired AkShare cache entries."
+      }
+    },
+    "/api/market/news": {
+      "get": {
+        "operationId": "backend_market_api_market_news",
+        "summary": "Market News",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "default": 10,
+              "title": "Limit",
+              "type": "integer"
+            },
+            "required": false
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "description": "同花顺实时新闻."
+      }
+    },
+    "/api/analysis/": {
+      "post": {
+        "operationId": "backend_analysis_api_create_analysis",
+        "summary": "Create Analysis",
+        "parameters": [],
+        "responses": {
+          "202": {
+            "description": "Accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnalysisCreateOut"
+                }
+              }
+            }
+          }
+        },
+        "description": "Create an AnalysisReport, resolve the entity, and start the graph run.\n\nReturns 202 with the job_id immediately; the client then opens the SSE\nstream at GET /{job_id}/stream.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnalysisCreateIn"
+              }
+            }
+          },
+          "required": true
+        }
+      },
+      "get": {
+        "operationId": "backend_analysis_api_analysis_list",
+        "summary": "Analysis List",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "page",
+            "schema": {
+              "default": 1,
+              "title": "Page",
+              "type": "integer"
+            },
+            "required": false
+          },
+          {
+            "in": "query",
+            "name": "page_size",
+            "schema": {
+              "default": 20,
+              "title": "Page Size",
+              "type": "integer"
+            },
+            "required": false
+          },
+          {
+            "in": "query",
+            "name": "stock_code",
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Stock Code"
+            },
+            "required": false
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            },
+            "required": false
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/AnalysisListItem"
+                  },
+                  "title": "Response",
+                  "type": "array"
+                }
+              }
+            }
+          }
+        },
+        "description": "Paginated analysis history list (lightweight)."
+      }
+    },
+    "/api/analysis/{job_id}/stream": {
+      "get": {
+        "operationId": "backend_analysis_api_analysis_stream",
+        "summary": "Analysis Stream",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "description": "Server-Sent Events stream of node-by-node progress.\n\nSupports Last-Event-ID / ?resume_from=<seq> for reconnect.\nEmits:\n    event: node\\ndata: {\"seq\":N,\"node\":\"...\",\"status\":\"completed|error\",\"message\":\"...\"}\n    event: done\\ndata: {\"report_id\":\"...\"}\n    event: error\\ndata: {\"node\":\"...\",\"message\":\"...\"}\n\nMust be an async view: with a sync view Django buffers the whole async\ngenerator (async_to_sync(to_list)) and the stream arrives only when the\nanalysis finishes."
+      }
+    },
+    "/api/analysis/{job_id}": {
+      "get": {
+        "operationId": "backend_analysis_api_analysis_detail",
+        "summary": "Analysis Detail",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnalysisDetailOut"
+                }
+              }
+            }
+          }
+        },
+        "description": "Full AnalysisReport (status + final_state)."
+      },
+      "delete": {
+        "operationId": "backend_analysis_api_analysis_delete",
+        "summary": "Analysis Delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "description": "Delete an analysis report (and its node events via cascade)."
+      }
+    },
+    "/api/backtests/": {
+      "get": {
+        "operationId": "backend_backtests_api_backtest_list",
+        "summary": "Backtest List",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "page",
+            "schema": {
+              "default": 1,
+              "title": "Page",
+              "type": "integer"
+            },
+            "required": false
+          },
+          {
+            "in": "query",
+            "name": "page_size",
+            "schema": {
+              "default": 20,
+              "title": "Page Size",
+              "type": "integer"
+            },
+            "required": false
+          },
+          {
+            "in": "query",
+            "name": "strategy_name",
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Strategy Name"
+            },
+            "required": false
+          },
+          {
+            "in": "query",
+            "name": "stock_code",
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Stock Code"
+            },
+            "required": false
+          },
+          {
+            "in": "query",
+            "name": "report_id",
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Report Id"
+            },
+            "required": false
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BacktestPageOut"
+                }
+              }
+            }
+          }
+        },
+        "description": "Paginated backtest history (lightweight rows, no JSON blobs)."
+      }
+    },
+    "/api/backtests/{run_id}": {
+      "get": {
+        "operationId": "backend_backtests_api_backtest_detail",
+        "summary": "Backtest Detail",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BacktestDetailOut"
+                }
+              }
+            }
+          }
+        },
+        "description": "Full record incl. parameters / engine / data_info / metrics JSON."
+      },
+      "delete": {
+        "operationId": "backend_backtests_api_backtest_delete",
+        "summary": "Backtest Delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "description": "Delete a record from the history."
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "HealthOut": {
+        "properties": {
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "version"
+        ],
+        "title": "HealthOut",
+        "type": "object"
+      },
+      "ConfigOut": {
+        "properties": {
+          "api_base": {
+            "default": "",
+            "title": "Api Base",
+            "type": "string"
+          },
+          "api_key": {
+            "default": "",
+            "title": "Api Key",
+            "type": "string"
+          },
+          "has_api_key": {
+            "default": false,
+            "title": "Has Api Key",
+            "type": "boolean"
+          },
+          "model_name": {
+            "default": "",
+            "title": "Model Name",
+            "type": "string"
+          },
+          "supported_models": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Supported Models",
+            "type": "array"
+          },
+          "llm": {
+            "additionalProperties": true,
+            "default": {},
+            "title": "Llm",
+            "type": "object"
+          },
+          "backtest": {
+            "additionalProperties": true,
+            "default": {},
+            "title": "Backtest",
+            "type": "object"
+          },
+          "web": {
+            "additionalProperties": true,
+            "default": {},
+            "title": "Web",
+            "type": "object"
+          }
+        },
+        "title": "ConfigOut",
+        "type": "object"
+      },
+      "ConfigIn": {
+        "properties": {
+          "api_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Api Key"
+          },
+          "api_base": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Api Base"
+          },
+          "model_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Name"
+          },
+          "supported_models": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Supported Models"
+          },
+          "llm": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Llm"
+          },
+          "backtest": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Backtest"
+          }
+        },
+        "title": "ConfigIn",
+        "type": "object"
+      },
+      "ModelsOut": {
+        "properties": {
+          "supported_models": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Supported Models",
+            "type": "array"
+          }
+        },
+        "required": [
+          "supported_models"
+        ],
+        "title": "ModelsOut",
+        "type": "object"
+      },
+      "SearchOut": {
+        "properties": {
+          "type": {
+            "title": "Type",
+            "type": "string"
+          },
+          "stock_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stock Code"
+          },
+          "stock_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stock Name"
+          },
+          "is_sector": {
+            "default": false,
+            "title": "Is Sector",
+            "type": "boolean"
+          },
+          "sector_type": {
+            "default": "",
+            "title": "Sector Type",
+            "type": "string"
+          },
+          "sector_cons": {
+            "default": [],
+            "items": {},
+            "title": "Sector Cons",
+            "type": "array"
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "title": "SearchOut",
+        "type": "object"
+      },
+      "CacheStatusOut": {
+        "properties": {
+          "cache_file": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cache File"
+          },
+          "cache_size": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cache Size"
+          },
+          "data_sources": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Data Sources"
+          }
+        },
+        "title": "CacheStatusOut",
+        "type": "object"
+      },
+      "AnalysisCreateOut": {
+        "properties": {
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "stock_code": {
+            "title": "Stock Code",
+            "type": "string"
+          },
+          "stock_name": {
+            "title": "Stock Name",
+            "type": "string"
+          },
+          "is_sector": {
+            "title": "Is Sector",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "job_id",
+          "status",
+          "stock_code",
+          "stock_name",
+          "is_sector"
+        ],
+        "title": "AnalysisCreateOut",
+        "type": "object"
+      },
+      "AnalysisCreateIn": {
+        "properties": {
+          "query": {
+            "title": "Query",
+            "type": "string"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "title": "AnalysisCreateIn",
+        "type": "object"
+      },
+      "AnalysisListItem": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "stock_code": {
+            "title": "Stock Code",
+            "type": "string"
+          },
+          "stock_name": {
+            "title": "Stock Name",
+            "type": "string"
+          },
+          "is_sector": {
+            "title": "Is Sector",
+            "type": "boolean"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "error": {
+            "default": "",
+            "title": "Error",
+            "type": "string"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "updated_at": {
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "stock_code",
+          "stock_name",
+          "is_sector",
+          "status",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "AnalysisListItem",
+        "type": "object"
+      },
+      "AnalysisDetailOut": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "query": {
+            "default": "",
+            "title": "Query",
+            "type": "string"
+          },
+          "stock_code": {
+            "title": "Stock Code",
+            "type": "string"
+          },
+          "stock_name": {
+            "title": "Stock Name",
+            "type": "string"
+          },
+          "is_sector": {
+            "title": "Is Sector",
+            "type": "boolean"
+          },
+          "sector_type": {
+            "default": "",
+            "title": "Sector Type",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "error": {
+            "default": "",
+            "title": "Error",
+            "type": "string"
+          },
+          "final_state": {
+            "additionalProperties": true,
+            "default": {},
+            "title": "Final State",
+            "type": "object"
+          },
+          "config_snapshot": {
+            "additionalProperties": true,
+            "default": {},
+            "title": "Config Snapshot",
+            "type": "object"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "updated_at": {
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "stock_code",
+          "stock_name",
+          "is_sector",
+          "status",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "AnalysisDetailOut",
+        "type": "object"
+      },
+      "BacktestListOut": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "strategy_name": {
+            "title": "Strategy Name",
+            "type": "string"
+          },
+          "stock_code": {
+            "title": "Stock Code",
+            "type": "string"
+          },
+          "sharpe": {
+            "title": "Sharpe",
+            "type": "number"
+          },
+          "cagr": {
+            "title": "Cagr",
+            "type": "number"
+          },
+          "max_drawdown": {
+            "title": "Max Drawdown",
+            "type": "number"
+          },
+          "win_rate": {
+            "title": "Win Rate",
+            "type": "number"
+          },
+          "report_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Report Id"
+          },
+          "timestamp": {
+            "title": "Timestamp",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "run_id",
+          "strategy_name",
+          "stock_code",
+          "sharpe",
+          "cagr",
+          "max_drawdown",
+          "win_rate",
+          "timestamp"
+        ],
+        "title": "BacktestListOut",
+        "type": "object"
+      },
+      "BacktestPageOut": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/BacktestListOut"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          },
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "page_size": {
+            "title": "Page Size",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "page",
+          "page_size"
+        ],
+        "title": "BacktestPageOut",
+        "type": "object"
+      },
+      "BacktestDetailOut": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "strategy_name": {
+            "title": "Strategy Name",
+            "type": "string"
+          },
+          "stock_code": {
+            "title": "Stock Code",
+            "type": "string"
+          },
+          "sharpe": {
+            "title": "Sharpe",
+            "type": "number"
+          },
+          "cagr": {
+            "title": "Cagr",
+            "type": "number"
+          },
+          "max_drawdown": {
+            "title": "Max Drawdown",
+            "type": "number"
+          },
+          "win_rate": {
+            "title": "Win Rate",
+            "type": "number"
+          },
+          "report_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Report Id"
+          },
+          "timestamp": {
+            "title": "Timestamp",
+            "type": "string"
+          },
+          "parameters": {
+            "additionalProperties": true,
+            "title": "Parameters",
+            "type": "object"
+          },
+          "engine": {
+            "additionalProperties": true,
+            "title": "Engine",
+            "type": "object"
+          },
+          "data_info": {
+            "additionalProperties": true,
+            "title": "Data Info",
+            "type": "object"
+          },
+          "metrics": {
+            "additionalProperties": true,
+            "title": "Metrics",
+            "type": "object"
+          }
+        },
+        "required": [
+          "id",
+          "run_id",
+          "strategy_name",
+          "stock_code",
+          "sharpe",
+          "cagr",
+          "max_drawdown",
+          "win_rate",
+          "timestamp",
+          "parameters",
+          "engine",
+          "data_info",
+          "metrics"
+        ],
+        "title": "BacktestDetailOut",
+        "type": "object"
+      }
+    }
+  },
+  "servers": []
+}

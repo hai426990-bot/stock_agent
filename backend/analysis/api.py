@@ -13,7 +13,7 @@ from django.shortcuts import get_object_or_404
 from ninja import Router
 
 from backend.analysis.models import AnalysisReport
-from backend.analysis.schemas import AnalysisCreateIn, AnalysisListItem, AnalysisDetailOut
+from backend.analysis.schemas import AnalysisCreateIn, AnalysisCreateOut, AnalysisListItem, AnalysisDetailOut
 from backend.analysis.services.entity_resolver import resolve_entity
 from backend.analysis.services.orchestrator import start_analysis, stream_events
 from backend.configapp.services.config_bridge import mask_config, get_effective_config
@@ -21,7 +21,7 @@ from backend.configapp.services.config_bridge import mask_config, get_effective_
 router = Router()
 
 
-@router.post("")
+@router.post("", response={202: AnalysisCreateOut})
 def create_analysis(request, payload: AnalysisCreateIn):
     """Create an AnalysisReport, resolve the entity, and start the graph run.
 

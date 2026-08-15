@@ -51,7 +51,10 @@ export function useSSE(url: string | null, options: UseSSEOptions = {}): UseSSER
     esRef.current = es
     setError(null)
 
-    es.onopen = () => setConnected(true)
+    es.onopen = () => {
+      // close() 后浏览器不再派发事件，但防御性守卫避免竞态下误报已连接
+      if (es.readyState !== EventSource.CLOSED) setConnected(true)
+    }
 
     es.addEventListener("node", (e: MessageEvent) => {
       const data: NodeEvent = JSON.parse(e.data)

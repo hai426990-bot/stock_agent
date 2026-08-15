@@ -1,3 +1,12 @@
+// Wire-contract types are derived from the backend OpenAPI schema
+// (src/types/api.generated.ts, regenerated via scripts/gen_openapi.py +
+// openapi-typescript — CI fails if they drift). Types that are richer than
+// the wire schema (e.g. AnalysisDetail.final_state) stay hand-written here.
+import type { components } from "./api.generated"
+
+export type AnalysisCreateResponse = components["schemas"]["AnalysisCreateOut"]
+export type AnalysisListItem = components["schemas"]["AnalysisListItem"]
+
 export interface MarketIndex {
   name: string
   price: number
@@ -51,25 +60,6 @@ export interface NodeEvent {
   status?: "completed" | "error"
   message?: string
   report_id?: string
-}
-
-export interface AnalysisCreateResponse {
-  job_id: string
-  status: string
-  stock_code: string
-  stock_name: string
-  is_sector: boolean
-}
-
-export interface AnalysisListItem {
-  id: string
-  stock_code: string
-  stock_name: string
-  is_sector: boolean
-  status: string
-  error: string
-  created_at: string
-  updated_at: string
 }
 
 export interface AnalysisDetail {
